@@ -1,13 +1,29 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import api from "@/lib/api";
 import type {
   CollectionHistoryEntry,
   CollectionRoute,
   DriverPerformanceEntry,
+  AIInsight,
+  FillPrediction,
 } from "@/types/api";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  Sparkles,
+  Settings,
+  Loader2,
+  AlertCircle,
+  BarChart3,
+  TrendingUp,
+  Users,
+  Zap,
+  Clock,
+  RefreshCw,
+} from "lucide-react";
 import {
   LineChart,
   Line,
@@ -188,7 +204,87 @@ function EmptyState({ message }: { message: string }) {
 // Component
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Insight type config
+// ---------------------------------------------------------------------------
+
+const INSIGHT_TYPES = [
+  { type: "general", label: "General Overview", icon: Sparkles },
+  { type: "hotspots", label: "Hotspots", icon: BarChart3 },
+  { type: "peak_days", label: "Peak Days", icon: TrendingUp },
+  { type: "staffing", label: "Staffing", icon: Users },
+  { type: "efficiency", label: "Efficiency", icon: Zap },
+] as const;
+
+// ---------------------------------------------------------------------------
+// Time-to-threshold color helper
+// ---------------------------------------------------------------------------
+
+function thresholdColor(minutes: number): string {
+  if (minutes < 60) return "text-red-600";
+  if (minutes < 240) return "text-yellow-600";
+  return "text-green-600";
+}
+
+function thresholdBg(minutes: number): string {
+  if (minutes < 60) return "bg-red-50 border-red-200";
+  if (minutes < 240) return "bg-yellow-50 border-yellow-200";
+  return "bg-green-50 border-green-200";
+}
+
 export function AnalyticsPage() {
+  // ---- AI Insights state ----
+  const [selectedInsightType, setSelectedInsightType] = useState<string | null>(null);
+  const [insightResult, setInsightResult] = useState<AIInsight | null>(null);
+  const [insightError, setInsightError] = useState<string | null>(null);
+
+  const insightMutation = useMutation({
+    mutationFn: async (type: string) => {
+      const res = await api.post<AIInsight>("/ai/insights", { type });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      setInsightResult(data);
+      setInsightError(null);
+    },
+    onError: (error: unknown) => {
+      setInsightResult(null);
+      const errData = (error as { response?: { data?: { error?: string } } })?.response?.data;
+      if (errData?.error?.toLowerCase().includes("not configured") || errData?.error?.toLowerCase().includes("disabled")) {
+        setInsightError("AI is not configured. Please set up an AI provider in Settings.");
+      } else {
+        setInsightError(errData?.error ?? "Failed to generate AI insight. Please try again.");
+      }
+    },
+  });
+
+  const handleInsightClick = (type: string) => {
+    setSelectedInsightType(type);
+    setInsightError(null);
+    insightMutation.mutate(type);
+  };
+
+  // ---- Predictions state ----
+  const [predictions, setPredictions] = useState<FillPrediction[]>([]);
+  const [predictionsError, setPredictionsError] = useState<string | null>(null);
+
+  const predictionMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post("/ai/predict/all");
+      return res.data;
+    },
+    onSuccess: (data) => {
+      const items = Array.isArray(data) ? data : data?.predictions ?? data?.data ?? [];
+      setPredictions(items);
+      setPredictionsError(null);
+    },
+    onError: (error: unknown) => {
+      setPredictions([]);
+      const errData = (error as { response?: { data?: { error?: string } } })?.response?.data;
+      setPredictionsError(errData?.error ?? "Failed to run predictions.");
+    },
+  });
+
   // ---- Query 1: Collection history (last 7 days) ----
   const {
     data: collectionHistory,
@@ -306,6 +402,242 @@ export function AnalyticsPage() {
           Performance metrics and operational insights
         </p>
       </div>
+
+      {/* ---- AI Insights Panel ---- */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-purple-500" />
+            <div>
+              <CardTitle className="text-base">AI Insights</CardTitle>
+              <CardDescription>
+                Get AI-powered analysis of your waste collection data
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {/* Insight type buttons */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            {INSIGHT_TYPES.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Button
+                  key={item.type}
+                  variant={selectedInsightType === item.type ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleInsightClick(item.type)}
+                  disabled={insightMutation.isPending}
+                >
+                  <Icon className="mr-1.5 h-3.5 w-3.5" />
+                  {item.label}
+                </Button>
+              );
+            })}
+          </div>
+
+          {/* Loading state */}
+          {insightMutation.isPending && (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
+                <p className="text-sm text-muted-foreground">Generating AI insight...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Error state */}
+          {insightError && !insightMutation.isPending && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-destructive">{insightError}</p>
+                  {insightError.includes("Settings") && (
+                    <a
+                      href="/settings"
+                      className="mt-1 inline-flex items-center gap-1 text-xs text-destructive underline hover:no-underline"
+                    >
+                      <Settings className="h-3 w-3" />
+                      Go to Settings
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Insight result */}
+          {insightResult && !insightMutation.isPending && !insightError && (
+            <div className="rounded-lg border border-purple-200 bg-purple-50/50 p-4 space-y-3">
+              <div className="prose prose-sm max-w-none text-foreground">
+                {insightResult.insight.split("\n").map((line, i) => {
+                  if (!line.trim()) return <br key={i} />;
+                  // Bold headers (lines starting with ** or ##)
+                  if (line.trim().startsWith("**") || line.trim().startsWith("##")) {
+                    const text = line.replace(/[#*]/g, "").trim();
+                    return (
+                      <p key={i} className="font-semibold text-foreground mt-2 mb-1">
+                        {text}
+                      </p>
+                    );
+                  }
+                  // Bullet points
+                  if (line.trim().startsWith("-") || line.trim().startsWith("*")) {
+                    return (
+                      <p key={i} className="ml-4 text-sm text-foreground/90">
+                        {line.trim()}
+                      </p>
+                    );
+                  }
+                  return (
+                    <p key={i} className="text-sm text-foreground/90">
+                      {line}
+                    </p>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-3 pt-2 border-t border-purple-200">
+                <Badge variant="secondary" className="text-[10px]">
+                  {insightResult.provider}
+                </Badge>
+                <span className="text-[10px] text-muted-foreground">
+                  Model: {insightResult.model}
+                </span>
+                <span className="text-[10px] text-muted-foreground ml-auto">
+                  <Clock className="inline-block h-3 w-3 mr-0.5" />
+                  {new Date(insightResult.generatedAt).toLocaleString()}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!insightMutation.isPending && !insightResult && !insightError && (
+            <div className="flex items-center justify-center py-6 text-muted-foreground">
+              <p className="text-sm">Select an insight type above to generate AI analysis.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ---- Fill Level Predictions Panel ---- */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-blue-500" />
+              <div>
+                <CardTitle className="text-base">Fill Level Predictions</CardTitle>
+                <CardDescription>
+                  AI-predicted fill levels and time to overflow threshold
+                </CardDescription>
+              </div>
+            </div>
+            <Button
+              onClick={() => predictionMutation.mutate()}
+              disabled={predictionMutation.isPending}
+              size="sm"
+            >
+              {predictionMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Running...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  Run Predictions
+                </>
+              )}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {/* Loading */}
+          {predictionMutation.isPending && (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                <p className="text-sm text-muted-foreground">Running fill level predictions...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Error */}
+          {predictionsError && !predictionMutation.isPending && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-destructive" />
+                <p className="text-sm text-destructive">{predictionsError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Results table */}
+          {predictions.length > 0 && !predictionMutation.isPending && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    <th className="pb-3 pr-4 font-medium text-muted-foreground">Device Code</th>
+                    <th className="pb-3 pr-4 font-medium text-muted-foreground text-right">Current Fill %</th>
+                    <th className="pb-3 pr-4 font-medium text-muted-foreground text-right">Predicted Fill %</th>
+                    <th className="pb-3 pr-4 font-medium text-muted-foreground text-right">Time to Threshold</th>
+                    <th className="pb-3 font-medium text-muted-foreground text-right">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {predictions.map((pred) => (
+                    <tr key={pred.id} className="group">
+                      <td className="py-3 pr-4">
+                        <span className="font-mono text-xs">{pred.deviceId}</span>
+                      </td>
+                      <td className="py-3 pr-4 text-right">
+                        <span className="font-medium">
+                          {/* Current fill not in prediction model -- show dash or predicted minus delta */}
+                          -
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4 text-right">
+                        <span className="font-semibold">
+                          {Math.round(pred.predictedFillPercent)}%
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4 text-right">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium",
+                            thresholdBg(pred.timeToThresholdMinutes),
+                            thresholdColor(pred.timeToThresholdMinutes)
+                          )}
+                        >
+                          <Clock className="h-3 w-3" />
+                          {pred.timeToThresholdMinutes < 60
+                            ? `${Math.round(pred.timeToThresholdMinutes)} min`
+                            : `${(pred.timeToThresholdMinutes / 60).toFixed(1)} hrs`}
+                        </span>
+                      </td>
+                      <td className="py-3 text-right">
+                        <span className="text-muted-foreground">
+                          {(pred.confidenceScore * 100).toFixed(0)}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {predictions.length === 0 && !predictionMutation.isPending && !predictionsError && (
+            <div className="flex items-center justify-center py-6 text-muted-foreground">
+              <p className="text-sm">Click "Run Predictions" to generate fill level forecasts.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ---- Row 1: Line charts ---- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

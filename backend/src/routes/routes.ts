@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import { getDb } from "../config/database";
-import { collectionRoutes, routeStops, smartBins } from "../db/schema";
+import { collectionRoutes, routeStops, smartBins, systemConfig } from "../db/schema";
+import { env } from "../config/env";
+import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -160,9 +162,9 @@ app.get("/:id", async (c) => {
   });
 });
 
-// ─── POST / — Create route manually ────────────────────────────────────────
+// ─── POST / — Create route manually (admin/dispatcher only) ────────────────
 
-app.post("/", async (c) => {
+app.post("/", requireRole("admin", "dispatcher"), async (c) => {
   const body = await c.req.json();
   const parsed = createRouteSchema.safeParse(body);
 
@@ -215,9 +217,9 @@ app.post("/", async (c) => {
   );
 });
 
-// ─── POST /generate — Generate optimized route (placeholder) ────────────────
+// ─── POST /generate — Generate optimized route (admin/dispatcher only) ──────
 
-app.post("/generate", async (c) => {
+app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
   const body = await c.req.json();
   const parsed = generateRouteSchema.safeParse(body);
 
@@ -227,7 +229,139 @@ app.post("/generate", async (c) => {
 
   const db = getDb();
 
-  // Fetch bins that are above the fill threshold in the subdivision
+  // 1. Get depot coordinates from system_config for this subdivision
+  let depotLat = 14.5995; // Default: Manila
+  let depotLng = 120.9842;
+
+  const depotConfigs = await db
+    .select({
+      key: systemConfig.configKey,
+      value: systemConfig.configValue,
+    })
+    .from(systemConfig)
+    .where(
+      and(
+        sql`${systemConfig.configKey} IN ('depot_latitude', 'depot_longitude')`,
+        eq(systemConfig.subdivisionId, parsed.data.subdivisionId)
+      )
+    );
+
+  for (const cfg of depotConfigs) {
+    if (cfg.key === "depot_latitude") {
+      depotLat = parseFloat(cfg.value) || depotLat;
+    } else if (cfg.key === "depot_longitude") {
+      depotLng = parseFloat(cfg.value) || depotLng;
+    }
+  }
+
+  // 2. Call the Python AI service for CVRP optimization
+  const aiServiceUrl = env.AI_SERVICE_URL;
+
+  let optimizationResult: {
+    routes?: Array<{
+      vehicle_id: number;
+      stops: Array<{
+        device_id: string;
+        device_code?: string;
+        latitude: number;
+        longitude: number;
+        sequence: number;
+      }>;
+      distance_km?: number;
+      duration_minutes?: number;
+    }>;
+    total_distance_km?: number;
+    total_duration_minutes?: number;
+    optimization_score?: number;
+    error?: string;
+  } | null = null;
+
+  let usedAIService = false;
+
+  try {
+    const optimizeResponse = await fetch(`${aiServiceUrl}/optimize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subdivision_id: parsed.data.subdivisionId,
+        depot: {
+          latitude: depotLat,
+          longitude: depotLng,
+        },
+        num_vehicles: 1,
+        vehicle_capacity: 1000,
+        threshold_percent: parsed.data.fillThreshold,
+      }),
+    });
+
+    if (optimizeResponse.ok) {
+      optimizationResult = await optimizeResponse.json() as typeof optimizationResult;
+      usedAIService = true;
+    } else {
+      console.warn(
+        `[route-generate] AI service returned ${optimizeResponse.status}, falling back to naive ordering`
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "[route-generate] AI service unavailable, falling back to naive ordering:",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // 3. If the AI service returned optimized routes, use them
+  if (usedAIService && optimizationResult?.routes && optimizationResult.routes.length > 0) {
+    const aiRoute = optimizationResult.routes[0]!;
+    const aiStops = aiRoute.stops || [];
+
+    // Create the collection_route record
+    const [route] = await db
+      .insert(collectionRoutes)
+      .values({
+        subdivisionId: parsed.data.subdivisionId,
+        assignedDriverId: parsed.data.assignedDriverId,
+        scheduledDate: parsed.data.scheduledDate
+          ? new Date(parsed.data.scheduledDate)
+          : new Date(),
+        optimizationScore: optimizationResult.optimization_score ?? null,
+        estimatedDistanceKm: aiRoute.distance_km ?? optimizationResult.total_distance_km ?? null,
+        estimatedDurationMinutes: aiRoute.duration_minutes ?? optimizationResult.total_duration_minutes ?? null,
+      })
+      .returning();
+
+    // Create route_stop records from the optimization result
+    let createdStops: typeof routeStops.$inferSelect[] = [];
+    if (aiStops.length > 0) {
+      createdStops = await db
+        .insert(routeStops)
+        .values(
+          aiStops.map((stop) => ({
+            routeId: route!.id,
+            deviceId: stop.device_id,
+            sequenceOrder: stop.sequence,
+          }))
+        )
+        .returning();
+    }
+
+    return c.json(
+      {
+        data: {
+          ...route,
+          stops: createdStops,
+          _meta: {
+            note: "Route generated via AI-powered CVRP optimization.",
+            binsConsidered: aiStops.length,
+            fillThreshold: parsed.data.fillThreshold,
+            optimizedBy: "ai-service",
+          },
+        },
+      },
+      201
+    );
+  }
+
+  // 4. Fallback: naive ordering when AI service is unavailable
   const bins = await db
     .select({
       id: smartBins.id,
@@ -244,8 +378,6 @@ app.post("/generate", async (c) => {
     )
     .limit(parsed.data.maxStops);
 
-  // Placeholder: create route with stops in the order returned
-  // In production, this would call OR-Tools or a routing optimization service
   const [route] = await db
     .insert(collectionRoutes)
     .values({
@@ -254,9 +386,9 @@ app.post("/generate", async (c) => {
       scheduledDate: parsed.data.scheduledDate
         ? new Date(parsed.data.scheduledDate)
         : new Date(),
-      optimizationScore: 78.5, // Mock score
-      estimatedDistanceKm: bins.length * 1.2, // Mock estimate
-      estimatedDurationMinutes: bins.length * 5, // Mock estimate
+      optimizationScore: null,
+      estimatedDistanceKm: bins.length * 1.2,
+      estimatedDurationMinutes: bins.length * 5,
     })
     .returning();
 
@@ -280,9 +412,10 @@ app.post("/generate", async (c) => {
         ...route,
         stops: createdStops,
         _meta: {
-          note: "Route generated with placeholder optimization. OR-Tools integration pending.",
+          note: "Route generated with naive ordering. AI optimization service was unavailable.",
           binsConsidered: bins.length,
           fillThreshold: parsed.data.fillThreshold,
+          optimizedBy: "fallback",
         },
       },
     },
@@ -290,9 +423,9 @@ app.post("/generate", async (c) => {
   );
 });
 
-// ─── PUT /:id — Update route ───────────────────────────────────────────────
+// ─── PUT /:id — Update route (admin/dispatcher only) ───────────────────────
 
-app.put("/:id", async (c) => {
+app.put("/:id", requireRole("admin", "dispatcher"), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   const parsed = updateRouteSchema.safeParse(body);

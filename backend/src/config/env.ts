@@ -10,6 +10,7 @@ const envSchema = z.object({
   MQTT_PASSWORD: z.string().default("secret"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   GOOGLE_MAPS_API_KEY: z.string().default(""),
+  AI_SERVICE_URL: z.string().default("http://ai-service:8000"),
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z
     .enum(["development", "production", "test"])

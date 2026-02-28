@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import { getDb } from "../config/database";
 import { smartBins, binTelemetry, fillPredictions } from "../db/schema";
+import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -114,9 +115,9 @@ app.get("/:id", async (c) => {
   });
 });
 
-// ─── POST / — Register new bin ──────────────────────────────────────────────
+// ─── POST / — Register new bin (admin/dispatcher only) ──────────────────────
 
-app.post("/", async (c) => {
+app.post("/", requireRole("admin", "dispatcher"), async (c) => {
   const body = await c.req.json();
   const parsed = createBinSchema.safeParse(body);
 
@@ -146,9 +147,9 @@ app.post("/", async (c) => {
   return c.json({ data: created }, 201);
 });
 
-// ─── PUT /:id — Update bin ──────────────────────────────────────────────────
+// ─── PUT /:id — Update bin (admin/dispatcher only) ──────────────────────────
 
-app.put("/:id", async (c) => {
+app.put("/:id", requireRole("admin", "dispatcher"), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   const parsed = updateBinSchema.safeParse(body);
@@ -175,9 +176,9 @@ app.put("/:id", async (c) => {
   return c.json({ data: updated });
 });
 
-// ─── DELETE /:id — Set status to inactive ───────────────────────────────────
+// ─── DELETE /:id — Set status to inactive (admin/dispatcher only) ───────────
 
-app.delete("/:id", async (c) => {
+app.delete("/:id", requireRole("admin", "dispatcher"), async (c) => {
   const { id } = c.req.param();
   const db = getDb();
 

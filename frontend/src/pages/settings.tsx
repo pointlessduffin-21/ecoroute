@@ -18,6 +18,12 @@ import {
   Bell,
   Save,
   CheckCircle,
+  Brain,
+  Eye,
+  EyeOff,
+  Zap,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 
 export function SettingsPage() {
@@ -65,6 +71,38 @@ export function SettingsPage() {
     smsAlerts: false,
   });
   const [notificationSaved, setNotificationSaved] = useState(false);
+
+  // AI Configuration state
+  const [aiSettings, setAiSettings] = useState({
+    aiProvider: "none" as "gemini" | "openrouter" | "none",
+    aiApiKey: "",
+    aiModel: "",
+  });
+  const [aiSaved, setAiSaved] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [aiTestStatus, setAiTestStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [aiTestMessage, setAiTestMessage] = useState("");
+
+  // AI test connection mutation
+  const testAiMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post("/ai/insights", { type: "general" });
+      return res.data;
+    },
+    onSuccess: () => {
+      setAiTestStatus("success");
+      setAiTestMessage("Connection successful! AI provider is responding.");
+      setTimeout(() => setAiTestStatus("idle"), 4000);
+    },
+    onError: (error: unknown) => {
+      setAiTestStatus("error");
+      const msg =
+        (error as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        "Failed to connect to AI provider. Check your API key and model.";
+      setAiTestMessage(msg);
+      setTimeout(() => setAiTestStatus("idle"), 6000);
+    },
+  });
 
   // Initialize local state from fetched config
   useEffect(() => {
@@ -122,6 +160,26 @@ export function SettingsPage() {
           smsAlerts: configMap["sms_alerts"] === "true",
         }));
       }
+
+      // AI Configuration
+      if (configMap["ai_provider"] !== undefined) {
+        setAiSettings(prev => ({
+          ...prev,
+          aiProvider: configMap["ai_provider"] as "gemini" | "openrouter" | "none",
+        }));
+      }
+      if (configMap["ai_api_key"] !== undefined) {
+        setAiSettings(prev => ({
+          ...prev,
+          aiApiKey: configMap["ai_api_key"],
+        }));
+      }
+      if (configMap["ai_model"] !== undefined) {
+        setAiSettings(prev => ({
+          ...prev,
+          aiModel: configMap["ai_model"],
+        }));
+      }
     }
   }, [configData]);
 
@@ -151,6 +209,22 @@ export function SettingsPage() {
     ]);
     setNotificationSaved(true);
     setTimeout(() => setNotificationSaved(false), 2000);
+  };
+
+  const handleSaveAi = () => {
+    saveConfigMutation.mutate([
+      { key: "ai_provider", value: aiSettings.aiProvider },
+      { key: "ai_api_key", value: aiSettings.aiApiKey },
+      { key: "ai_model", value: aiSettings.aiModel },
+    ]);
+    setAiSaved(true);
+    setTimeout(() => setAiSaved(false), 2000);
+  };
+
+  const getModelPlaceholder = () => {
+    if (aiSettings.aiProvider === "gemini") return "gemini-2.0-flash";
+    if (aiSettings.aiProvider === "openrouter") return "google/gemini-2.0-flash-001";
+    return "Select a provider first";
   };
 
   return (
@@ -460,6 +534,173 @@ export function SettingsPage() {
                 <Save className="mr-2 h-4 w-4" />
                 Save Preferences
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* AI Configuration */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <CardTitle>AI Configuration</CardTitle>
+                <CardDescription>
+                  Configure AI provider for intelligent insights and predictions.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              {/* AI Provider Selection */}
+              <div className="space-y-3">
+                <label className="text-sm font-medium">AI Provider</label>
+                <div className="flex flex-wrap gap-3">
+                  {([
+                    { value: "gemini" as const, label: "Google Gemini", description: "Direct Gemini API access" },
+                    { value: "openrouter" as const, label: "OpenRouter", description: "Multi-provider gateway" },
+                    { value: "none" as const, label: "Disabled", description: "AI features off" },
+                  ] as const).map((provider) => (
+                    <label
+                      key={provider.value}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted/50",
+                        aiSettings.aiProvider === provider.value &&
+                          "border-primary bg-primary/5 ring-1 ring-primary"
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="ai_provider"
+                        value={provider.value}
+                        checked={aiSettings.aiProvider === provider.value}
+                        onChange={(e) =>
+                          setAiSettings({
+                            ...aiSettings,
+                            aiProvider: e.target.value as "gemini" | "openrouter" | "none",
+                          })
+                        }
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <p className="text-sm font-medium">{provider.label}</p>
+                        <p className="text-xs text-muted-foreground">{provider.description}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* API Key & Model - Only show when provider is selected */}
+              {aiSettings.aiProvider !== "none" && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {/* API Key Input */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">API Key</label>
+                    <div className="relative">
+                      <Input
+                        type={showApiKey ? "text" : "password"}
+                        value={aiSettings.aiApiKey}
+                        onChange={(e) =>
+                          setAiSettings({
+                            ...aiSettings,
+                            aiApiKey: e.target.value,
+                          })
+                        }
+                        placeholder="Enter your API key"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showApiKey ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Your API key is stored securely on the server.
+                    </p>
+                  </div>
+
+                  {/* Model Selection */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Model Name</label>
+                    <Input
+                      value={aiSettings.aiModel}
+                      onChange={(e) =>
+                        setAiSettings({
+                          ...aiSettings,
+                          aiModel: e.target.value,
+                        })
+                      }
+                      placeholder={getModelPlaceholder()}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {aiSettings.aiProvider === "gemini"
+                        ? "Default: gemini-2.0-flash"
+                        : "Default: google/gemini-2.0-flash-001"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Test Connection + Save */}
+              <div className="flex items-center justify-between border-t border-border pt-4">
+                <div className="flex items-center gap-3">
+                  {aiSettings.aiProvider !== "none" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setAiTestStatus("loading");
+                        testAiMutation.mutate();
+                      }}
+                      disabled={aiTestStatus === "loading" || !aiSettings.aiApiKey}
+                    >
+                      {aiTestStatus === "loading" ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="mr-2 h-4 w-4" />
+                          Test Connection
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {aiTestStatus === "success" && (
+                    <span className="flex items-center gap-1 text-sm text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      {aiTestMessage}
+                    </span>
+                  )}
+                  {aiTestStatus === "error" && (
+                    <span className="flex items-center gap-1 text-sm text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      {aiTestMessage}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {aiSaved && (
+                    <span className="flex items-center gap-1 text-sm text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      AI settings saved
+                    </span>
+                  )}
+                  <Button onClick={handleSaveAi}>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save AI Settings
+                  </Button>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

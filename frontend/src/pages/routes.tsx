@@ -5,10 +5,13 @@ import type {
   CollectionRoute,
   RouteStop,
   User,
+  Subdivision,
   PaginatedResponse,
+  RouteOptimizationRequest,
 } from "@/types/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -27,6 +30,10 @@ import {
   Eye,
   Play,
   CheckCircle,
+  X,
+  Loader2,
+  Settings2,
+  TrendingUp,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -88,6 +95,15 @@ export function RoutesPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<RouteStatus | "all">("all");
   const [expandedRouteId, setExpandedRouteId] = useState<string | null>(null);
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [generateParams, setGenerateParams] = useState<RouteOptimizationRequest>({
+    subdivisionId: "",
+    numVehicles: 1,
+    vehicleCapacityLiters: 1000,
+    thresholdPercent: 80,
+    includePredicted: false,
+  });
+  const [generateResult, setGenerateResult] = useState<CollectionRoute | null>(null);
 
   // ---- Queries ----
 
@@ -136,15 +152,30 @@ export function RoutesPage() {
 
   const driverMap = new Map((driversResponse?.data ?? []).map(d => [d.id, d.fullName]));
 
+  // Fetch subdivisions for dropdown
+  const { data: subdivisionsResponse } = useQuery({
+    queryKey: ["subdivisions"],
+    queryFn: async () => {
+      const res = await api.get("/subdivisions");
+      const payload = res.data;
+      if (Array.isArray(payload)) return payload as Subdivision[];
+      if (payload?.data && Array.isArray(payload.data)) return payload.data as Subdivision[];
+      return [] as Subdivision[];
+    },
+  });
+
+  const subdivisions = subdivisionsResponse ?? [];
+
   // ---- Mutations ----
 
   const generateRouteMutation = useMutation({
-    mutationFn: async () => {
-      const res = await api.post("/routes/generate");
+    mutationFn: async (params: RouteOptimizationRequest) => {
+      const res = await api.post("/routes/generate", params);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["routes"] });
+      setGenerateResult(data);
     },
   });
 
@@ -186,33 +217,239 @@ export function RoutesPage() {
           </p>
         </div>
         <Button
-          onClick={() => generateRouteMutation.mutate()}
-          disabled={generateRouteMutation.isPending}
+          onClick={() => {
+            setShowGenerateModal(true);
+            setGenerateResult(null);
+            generateRouteMutation.reset();
+          }}
         >
-          {generateRouteMutation.isPending ? (
-            <>
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Play className="h-4 w-4" />
-              Generate Route
-            </>
-          )}
+          <Play className="h-4 w-4" />
+          Generate Route
         </Button>
       </div>
 
       {/* Generation result feedback */}
-      {generateRouteMutation.isSuccess && (
+      {generateRouteMutation.isSuccess && !showGenerateModal && (
         <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
           <CheckCircle className="mr-1.5 inline-block h-4 w-4" />
           New route generated successfully.
+          {generateResult?.optimizationScore != null && (
+            <span className="ml-2 font-semibold">
+              Optimization Score: {generateResult.optimizationScore}%
+            </span>
+          )}
         </div>
       )}
-      {generateRouteMutation.isError && (
+      {generateRouteMutation.isError && !showGenerateModal && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
           Failed to generate route. Please try again.
+        </div>
+      )}
+
+      {/* Generate Route Modal */}
+      {showGenerateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => {
+              if (!generateRouteMutation.isPending) setShowGenerateModal(false);
+            }}
+          />
+          {/* Modal content */}
+          <div className="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card shadow-xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border p-6">
+              <div className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5 text-muted-foreground" />
+                <h2 className="text-lg font-semibold">Generate Optimized Route</h2>
+              </div>
+              <button
+                onClick={() => {
+                  if (!generateRouteMutation.isPending) setShowGenerateModal(false);
+                }}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="space-y-4 p-6">
+              {/* Subdivision selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Subdivision</label>
+                <select
+                  value={generateParams.subdivisionId}
+                  onChange={(e) =>
+                    setGenerateParams({ ...generateParams, subdivisionId: e.target.value })
+                  }
+                  className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="">Select a subdivision...</option>
+                  {subdivisions.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.name} ({sub.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* Number of vehicles */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Number of Vehicles</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={generateParams.numVehicles}
+                    onChange={(e) =>
+                      setGenerateParams({
+                        ...generateParams,
+                        numVehicles: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+
+                {/* Vehicle capacity */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Vehicle Capacity (L)</label>
+                  <Input
+                    type="number"
+                    min={100}
+                    max={10000}
+                    step={100}
+                    value={generateParams.vehicleCapacityLiters}
+                    onChange={(e) =>
+                      setGenerateParams({
+                        ...generateParams,
+                        vehicleCapacityLiters: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Fill threshold */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  Fill Threshold (%) - Include bins above this level
+                </label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={10}
+                    max={100}
+                    value={generateParams.thresholdPercent}
+                    onChange={(e) =>
+                      setGenerateParams({
+                        ...generateParams,
+                        thresholdPercent: Number(e.target.value),
+                      })
+                    }
+                    className="w-24"
+                  />
+                  <div className="flex-1">
+                    <div className="h-2 w-full rounded-full bg-muted">
+                      <div
+                        className={cn(
+                          "h-2 rounded-full transition-all",
+                          (generateParams.thresholdPercent ?? 80) >= 90
+                            ? "bg-red-500"
+                            : (generateParams.thresholdPercent ?? 80) >= 75
+                              ? "bg-yellow-500"
+                              : "bg-green-500"
+                        )}
+                        style={{
+                          width: `${generateParams.thresholdPercent ?? 80}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Include predicted overflows */}
+              <label className="flex items-center gap-3 rounded-lg border border-border p-3 cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={generateParams.includePredicted ?? false}
+                  onChange={(e) =>
+                    setGenerateParams({
+                      ...generateParams,
+                      includePredicted: e.target.checked,
+                    })
+                  }
+                  className="h-4 w-4 rounded border-input"
+                />
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Include Predicted Overflows</p>
+                  <p className="text-xs text-muted-foreground">
+                    Include bins that are predicted to exceed threshold before next collection.
+                  </p>
+                </div>
+                <TrendingUp className="ml-auto h-4 w-4 text-muted-foreground" />
+              </label>
+
+              {/* Error in modal */}
+              {generateRouteMutation.isError && (
+                <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                  Failed to generate route. Check parameters and try again.
+                </div>
+              )}
+
+              {/* Success in modal */}
+              {generateRouteMutation.isSuccess && generateResult && (
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                  <CheckCircle className="mr-1.5 inline-block h-4 w-4" />
+                  Route generated successfully!
+                  {generateResult.optimizationScore != null && (
+                    <span className="ml-1 font-semibold">
+                      Score: {generateResult.optimizationScore}%
+                    </span>
+                  )}
+                  {generateResult.estimatedDistanceKm != null && (
+                    <span className="ml-2">
+                      Distance: {generateResult.estimatedDistanceKm.toFixed(1)} km
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 border-t border-border p-6">
+              <Button
+                variant="outline"
+                onClick={() => setShowGenerateModal(false)}
+                disabled={generateRouteMutation.isPending}
+              >
+                {generateRouteMutation.isSuccess ? "Close" : "Cancel"}
+              </Button>
+              {!generateRouteMutation.isSuccess && (
+                <Button
+                  onClick={() => generateRouteMutation.mutate(generateParams)}
+                  disabled={
+                    generateRouteMutation.isPending || !generateParams.subdivisionId
+                  }
+                >
+                  {generateRouteMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Optimizing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4" />
+                      Generate Route
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

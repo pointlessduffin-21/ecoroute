@@ -129,9 +129,18 @@ class EcoRouteRepository @Inject constructor(
         page: Int = 1,
         limit: Int = 50,
         status: String? = null,
+        driverId: String? = null,
     ): Result<List<CollectionRoute>> {
         return try {
-            handlePaginatedResponse(api.getRoutes(page, limit, status))
+            handlePaginatedResponse(api.getRoutes(page, limit, status, driverId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getRoute(routeId: String): Result<CollectionRoute> {
+        return try {
+            handleResponse(api.getRoute(routeId))
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -140,6 +149,28 @@ class EcoRouteRepository @Inject constructor(
     suspend fun getRouteStops(routeId: String): Result<List<RouteStop>> {
         return try {
             handleResponse(api.getRouteStops(routeId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateRouteStatus(routeId: String, status: String): Result<CollectionRoute> {
+        return try {
+            handleResponse(api.updateRouteStatus(routeId, UpdateRouteStatusRequest(status)))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateStopStatus(
+        routeId: String,
+        stopId: String,
+        status: String,
+        notes: String? = null,
+        photoProofUrl: String? = null,
+    ): Result<RouteStop> {
+        return try {
+            handleResponse(api.updateStopStatus(routeId, stopId, UpdateStopStatusRequest(status, notes, photoProofUrl)))
         } catch (e: Exception) {
             Result.failure(e)
         }

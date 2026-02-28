@@ -9,14 +9,24 @@ import {
   LogOut,
   MapPin,
   BarChart3,
+  Truck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+interface NavItem {
+  to: string;
+  icon: React.ElementType;
+  label: string;
+  adminOnly?: boolean;
+  driverOnly?: boolean;
+}
+
+const navItems: NavItem[] = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/bins", icon: Trash2, label: "Smart Bins" },
   { to: "/routes", icon: Route, label: "Routes" },
+  { to: "/my-routes", icon: Truck, label: "My Routes", driverOnly: true },
   { to: "/alerts", icon: Bell, label: "Alerts" },
   { to: "/users", icon: Users, label: "Users", adminOnly: true },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
@@ -25,7 +35,7 @@ const navItems = [
 ];
 
 export function Sidebar() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isDriver } = useAuth();
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-border bg-sidebar">
@@ -38,7 +48,11 @@ export function Sidebar() {
 
       <nav className="flex-1 space-y-1 p-3">
         {navItems
-          .filter((item) => !item.adminOnly || isAdmin)
+          .filter((item) => {
+            if (item.adminOnly && !isAdmin) return false;
+            if (item.driverOnly && !isDriver) return false;
+            return true;
+          })
           .map((item) => (
             <NavLink
               key={item.to}

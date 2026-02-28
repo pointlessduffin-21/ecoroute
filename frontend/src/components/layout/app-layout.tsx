@@ -7,6 +7,7 @@ const pageTitles: Record<string, string> = {
   "/": "Dashboard",
   "/bins": "Smart Bins",
   "/routes": "Route Planning",
+  "/my-routes": "My Routes",
   "/alerts": "Alerts",
   "/users": "User Management",
   "/analytics": "Analytics",
@@ -17,7 +18,8 @@ const pageTitles: Record<string, string> = {
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const title = pageTitles[location.pathname] ?? "EcoRoute";
+  const title = pageTitles[location.pathname]
+    ?? (location.pathname.match(/^\/routes\/.*\/execute$/) ? "Route Execution" : "EcoRoute");
 
   return (
     <div className="flex h-screen bg-background">

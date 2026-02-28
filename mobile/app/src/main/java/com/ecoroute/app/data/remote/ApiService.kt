@@ -89,10 +89,27 @@ interface ApiService {
         @Query("page") page: Int = 1,
         @Query("limit") limit: Int = 50,
         @Query("status") status: String? = null,
+        @Query("driverId") driverId: String? = null,
     ): Response<PaginatedResponse<CollectionRoute>>
+
+    @GET("routes/{id}")
+    suspend fun getRoute(@Path("id") id: String): Response<ApiResponse<CollectionRoute>>
 
     @GET("routes/{id}/stops")
     suspend fun getRouteStops(@Path("id") id: String): Response<ApiResponse<List<RouteStop>>>
+
+    @PATCH("routes/{id}/status")
+    suspend fun updateRouteStatus(
+        @Path("id") id: String,
+        @Body body: UpdateRouteStatusRequest,
+    ): Response<ApiResponse<CollectionRoute>>
+
+    @PATCH("routes/{routeId}/stops/{stopId}")
+    suspend fun updateStopStatus(
+        @Path("routeId") routeId: String,
+        @Path("stopId") stopId: String,
+        @Body body: UpdateStopStatusRequest,
+    ): Response<ApiResponse<RouteStop>>
 
     @POST("routes/generate")
     suspend fun generateRoute(

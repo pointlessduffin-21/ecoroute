@@ -18,6 +18,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import com.ecoroute.app.data.model.User
 import com.ecoroute.app.ui.screens.alerts.AlertsScreen
 import com.ecoroute.app.ui.screens.analytics.AnalyticsScreen
@@ -25,6 +27,7 @@ import com.ecoroute.app.ui.screens.bins.BinsScreen
 import com.ecoroute.app.ui.screens.dashboard.DashboardScreen
 import com.ecoroute.app.ui.screens.login.LoginScreen
 import com.ecoroute.app.ui.screens.login.LoginViewModel
+import com.ecoroute.app.ui.screens.routeexecution.RouteExecutionScreen
 import com.ecoroute.app.ui.screens.routes.RoutesScreen
 import com.ecoroute.app.ui.screens.provisioning.ProvisioningScreen
 import com.ecoroute.app.ui.screens.settings.SettingsScreen
@@ -75,7 +78,13 @@ fun EcoRouteNavHost() {
         }
         composable(Screen.Routes.route) {
             AppScaffold(navController, authState.user, Screen.Routes, loginViewModel) {
-                RoutesScreen()
+                RoutesScreen(
+                    onNavigateToRouteExecution = { routeId ->
+                        navController.navigate(Screen.RouteExecution(routeId).route)
+                    },
+                    currentUserRole = authState.user?.role,
+                    currentUserId = authState.user?.id,
+                )
             }
         }
         composable(Screen.Alerts.route) {
@@ -102,6 +111,17 @@ fun EcoRouteNavHost() {
             AppScaffold(navController, authState.user, Screen.Settings, loginViewModel) {
                 SettingsScreen()
             }
+        }
+
+        composable(
+            route = Screen.RouteExecution.ROUTE_PATTERN,
+            arguments = listOf(
+                navArgument("routeId") { type = NavType.StringType },
+            ),
+        ) {
+            RouteExecutionScreen(
+                onNavigateBack = { navController.popBackStack() },
+            )
         }
     }
 }

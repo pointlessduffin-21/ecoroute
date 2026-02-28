@@ -21,6 +21,7 @@ data class RoutesUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
     val statusFilter: String = "all",
+    val driverFilter: String? = null,
     val expandedRouteId: String? = null,
     val isGenerating: Boolean = false,
 )
@@ -42,8 +43,9 @@ class RoutesViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             val status = _uiState.value.statusFilter.let { if (it == "all") null else it }
+            val driverId = _uiState.value.driverFilter
 
-            repository.getRoutes(status = status)
+            repository.getRoutes(status = status, driverId = driverId)
                 .onSuccess { routes ->
                     _uiState.update { it.copy(routes = routes, isLoading = false) }
                 }
@@ -51,6 +53,11 @@ class RoutesViewModel @Inject constructor(
                     _uiState.update { it.copy(isLoading = false, error = e.message) }
                 }
         }
+    }
+
+    fun setDriverFilter(driverId: String?) {
+        _uiState.update { it.copy(driverFilter = driverId) }
+        loadRoutes()
     }
 
     private fun loadDrivers() {

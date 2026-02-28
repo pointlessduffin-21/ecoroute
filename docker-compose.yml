@@ -75,6 +75,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-ecoroute-dev-jwt-secret-2026}
       DEVICE_API_KEY: ${DEVICE_API_KEY:-ecoroute-device-key-change-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      AI_SERVICE_URL: http://ai-service:8000
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
     depends_on:
@@ -84,6 +85,24 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_started
+
+  # ─── AI Service (Python + FastAPI) ──────────────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: ecoroute-ai-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-ecoroute_dev}@postgres:5432/ecoroute
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+    volumes:
+      - ai_models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ─── Frontend (React + Nginx) ──────────────────────────────────────────────
   frontend:
@@ -102,3 +121,4 @@ volumes:
   redis_data:
   mosquitto_data:
   mosquitto_log:
+  ai_models:

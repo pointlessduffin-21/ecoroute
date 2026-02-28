@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { getDb } from "../config/database";
 import { alerts } from "../db/schema";
+import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -98,9 +99,9 @@ app.get("/:id", async (c) => {
   return c.json({ data: result[0] });
 });
 
-// ─── POST / — Create alert ─────────────────────────────────────────────────
+// ─── POST / — Create alert (admin/dispatcher only) ─────────────────────────
 
-app.post("/", async (c) => {
+app.post("/", requireRole("admin", "dispatcher"), async (c) => {
   const body = await c.req.json();
   const parsed = createAlertSchema.safeParse(body);
 
@@ -124,9 +125,9 @@ app.post("/", async (c) => {
   return c.json({ data: created }, 201);
 });
 
-// ─── PATCH /:id/acknowledge — Acknowledge an alert ─────────────────────────
+// ─── PATCH /:id/acknowledge — Acknowledge alert (admin/dispatcher only) ─────
 
-app.patch("/:id/acknowledge", async (c) => {
+app.patch("/:id/acknowledge", requireRole("admin", "dispatcher"), async (c) => {
   const { id } = c.req.param();
   const user = c.get("user");
   const db = getDb();
@@ -148,9 +149,9 @@ app.patch("/:id/acknowledge", async (c) => {
   return c.json({ data: updated });
 });
 
-// ─── DELETE /:id — Delete alert ─────────────────────────────────────────────
+// ─── DELETE /:id — Delete alert (admin only) ────────────────────────────────
 
-app.delete("/:id", async (c) => {
+app.delete("/:id", requireRole("admin"), async (c) => {
   const { id } = c.req.param();
   const db = getDb();
 

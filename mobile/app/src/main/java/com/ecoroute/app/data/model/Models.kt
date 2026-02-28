@@ -214,6 +214,18 @@ data class CreateBinRequest(
     val thresholdPercent: Int = 80,
 )
 
+// ── Route Execution Requests ────────────────────────────────────────
+
+data class UpdateRouteStatusRequest(
+    val status: String,
+)
+
+data class UpdateStopStatusRequest(
+    val status: String,
+    val notes: String? = null,
+    val photoProofUrl: String? = null,
+)
+
 // ── API Wrapper ─────────────────────────────────────────────────────
 
 data class ApiResponse<T>(

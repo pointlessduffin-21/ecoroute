@@ -9,6 +9,8 @@ import { AlertsPage } from "@/pages/alerts";
 import { UsersPage } from "@/pages/users";
 import { AnalyticsPage } from "@/pages/analytics";
 import { SettingsPage } from "@/pages/settings";
+import { MyRoutesPage } from "@/pages/my-routes";
+import { RouteExecutionPage } from "@/pages/route-execution";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -57,6 +59,8 @@ export function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="my-routes" element={<MyRoutesPage />} />
+        <Route path="routes/:routeId/execute" element={<RouteExecutionPage />} />
       </Route>
     </Routes>
   );

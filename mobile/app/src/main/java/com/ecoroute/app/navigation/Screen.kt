@@ -20,6 +20,16 @@ sealed class Screen(
     data object Provisioning : Screen("provisioning", "Device Setup", Icons.Filled.BluetoothSearching)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
+    data class RouteExecution(val routeId: String) : Screen(
+        route = "route_execution/$routeId",
+        title = "Route Execution",
+        icon = Icons.Filled.PlayArrow,
+    ) {
+        companion object {
+            const val ROUTE_PATTERN = "route_execution/{routeId}"
+        }
+    }
+
     companion object {
         val drawerItems = listOf(Dashboard, Bins, Routes, Alerts, Users, Analytics, Provisioning, Settings)
     }

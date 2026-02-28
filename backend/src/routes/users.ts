@@ -4,9 +4,13 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { getDb } from "../config/database";
 import { getSupabaseAdmin } from "../config/supabase";
 import { users } from "../db/schema";
+import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
+
+// All user management routes require admin role
+app.use("/*", requireRole("admin"));
 
 // ─── Zod Schemas ────────────────────────────────────────────────────────────
 

@@ -5,10 +5,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,8 +24,20 @@ import com.ecoroute.app.ui.components.*
 import com.ecoroute.app.ui.theme.*
 
 @Composable
-fun RoutesScreen(viewModel: RoutesViewModel = hiltViewModel()) {
+fun RoutesScreen(
+    viewModel: RoutesViewModel = hiltViewModel(),
+    onNavigateToRouteExecution: (String) -> Unit = {},
+    currentUserRole: String? = null,
+    currentUserId: String? = null,
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // If user is a driver, filter to their own routes
+    LaunchedEffect(currentUserRole, currentUserId) {
+        if (currentUserRole == "driver" && currentUserId != null) {
+            viewModel.setDriverFilter(currentUserId)
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -55,6 +69,8 @@ fun RoutesScreen(viewModel: RoutesViewModel = hiltViewModel()) {
                                 isExpanded = state.expandedRouteId == route.id,
                                 stops = state.stopsMap[route.id],
                                 onToggleExpand = { viewModel.toggleExpanded(route.id) },
+                                onExecuteRoute = { onNavigateToRouteExecution(route.id) },
+                                showExecuteButton = route.status != "completed" && route.status != "cancelled",
                             )
                         }
                         item { Spacer(Modifier.height(72.dp)) }
@@ -63,22 +79,24 @@ fun RoutesScreen(viewModel: RoutesViewModel = hiltViewModel()) {
             }
         }
 
-        // Generate Route FAB
-        FloatingActionButton(
-            onClick = { viewModel.generateRoute() },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp),
-            containerColor = MaterialTheme.colorScheme.primary,
-        ) {
-            if (state.isGenerating) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Icon(Icons.Filled.AutoFixHigh, contentDescription = "Generate Route")
+        // Generate Route FAB — hide for drivers
+        if (currentUserRole != "driver") {
+            FloatingActionButton(
+                onClick = { viewModel.generateRoute() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp),
+                containerColor = MaterialTheme.colorScheme.primary,
+            ) {
+                if (state.isGenerating) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(Icons.Filled.AutoFixHigh, contentDescription = "Generate Route")
+                }
             }
         }
     }
@@ -91,6 +109,8 @@ private fun RouteCard(
     isExpanded: Boolean,
     stops: List<RouteStop>?,
     onToggleExpand: () -> Unit,
+    onExecuteRoute: () -> Unit,
+    showExecuteButton: Boolean,
 ) {
     val (statusColor, statusBg) = statusColors(route.status)
 
@@ -142,7 +162,7 @@ private fun RouteCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            route.scheduledDate?.take(10) ?: "—",
+                            route.scheduledDate?.take(10) ?: "--",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -156,16 +176,52 @@ private fun RouteCard(
                 ) {
                     MetricChip(
                         label = "Distance",
-                        value = route.estimatedDistanceKm?.let { "%.1f km".format(it) } ?: "—",
+                        value = route.estimatedDistanceKm?.let { "%.1f km".format(it) } ?: "--",
                     )
                     MetricChip(
                         label = "Duration",
-                        value = route.estimatedDurationMinutes?.let { "%.0f min".format(it) } ?: "—",
+                        value = route.estimatedDurationMinutes?.let { "%.0f min".format(it) } ?: "--",
                     )
                     MetricChip(
                         label = "Score",
-                        value = route.optimizationScore?.let { "%.0f%%".format(it) } ?: "—",
+                        value = route.optimizationScore?.let { "%.0f%%".format(it) } ?: "--",
                     )
+                }
+
+                // Execute route button
+                if (showExecuteButton) {
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = onExecuteRoute,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = when (route.status) {
+                                "in_progress" -> Blue500
+                                else -> Green600
+                            },
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Icon(
+                            when (route.status) {
+                                "in_progress" -> Icons.Filled.PlayArrow
+                                else -> Icons.Filled.PlayArrow
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            when (route.status) {
+                                "in_progress" -> "Continue Route"
+                                else -> "Execute Route"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
 
                 // Expand indicator

@@ -10,9 +10,13 @@ import {
   serviceEvents,
   users,
 } from "../db/schema";
+import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
+
+// Analytics accessible by admin and dispatcher only
+app.use("/*", requireRole("admin", "dispatcher"));
 
 // ─── GET /dashboard — Dashboard KPI summary ────────────────────────────────
 

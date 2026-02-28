@@ -19,6 +19,7 @@ import notificationRoutes from "./routes/notifications";
 import analyticsRoutes from "./routes/analytics";
 import systemConfigRoutes from "./routes/system-config";
 import deviceRoutes from "./routes/device";
+import aiRoutes from "./routes/ai";
 
 // Services
 import * as mqttService from "./services/mqtt";
@@ -77,6 +78,7 @@ api.route("/service-events", serviceEventRoutes);
 api.route("/notifications", notificationRoutes);
 api.route("/analytics", analyticsRoutes);
 api.route("/system-config", systemConfigRoutes);
+api.route("/ai", aiRoutes);
 
 app.route("/api/v1", api);
 

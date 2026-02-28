@@ -91,6 +91,18 @@ export interface RouteStop {
   servicedAt: string | null;
   photoProofUrl: string | null;
   notes: string | null;
+  deviceCode?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface RouteWithStops extends CollectionRoute {
+  stops: RouteStop[];
+}
+
+export interface StopIssueReport {
+  severity: "minor" | "major" | "critical";
+  description: string;
 }
 
 export interface Notification {
@@ -153,4 +165,29 @@ export interface DriverPerformanceEntry {
   avg_duration_minutes: number;
   avg_optimization_score: number;
   service_events_count: number;
+}
+
+export interface FillPrediction {
+  id: number;
+  deviceId: string;
+  predictedFillPercent: number;
+  timeToThresholdMinutes: number;
+  confidenceScore: number;
+  modelVersion: string;
+  predictedAt: string;
+}
+
+export interface AIInsight {
+  insight: string;
+  provider: string;
+  model: string;
+  generatedAt: string;
+}
+
+export interface RouteOptimizationRequest {
+  subdivisionId: string;
+  numVehicles?: number;
+  vehicleCapacityLiters?: number;
+  thresholdPercent?: number;
+  includePredicted?: boolean;
 }
