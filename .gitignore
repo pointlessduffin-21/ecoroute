@@ -1,0 +1,27 @@
+# Environment variables
+.env
+.env.local
+
+# Node
+node_modules/
+
+# Firmware build artifacts
+firmware/EcoRouteBin/build/
+firmware/.pio/
+
+# Android / Gradle
+mobile/.gradle/
+mobile/build/
+mobile/app/build/
+mobile/local.properties
+*.apk
+*.aab
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

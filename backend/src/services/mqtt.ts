@@ -1,10 +1,8 @@
 import mqtt from "mqtt";
 import { z } from "zod";
-import { getDb } from "../config/database";
-import { smartBins, binTelemetry, alerts } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { processTelemetry } from "./telemetry-processor";
 
-// ─── Telemetry payload schema ────────────────────────────────────────────────
+// ─── MQTT telemetry payload schema (snake_case from IoT devices) ────────────
 
 const telemetrySchema = z.object({
   fill_level_percent: z.number().min(0).max(100),
@@ -12,8 +10,6 @@ const telemetrySchema = z.object({
   battery_voltage: z.number().nonnegative(),
   signal_strength: z.number().int(),
 });
-
-type TelemetryPayload = z.infer<typeof telemetrySchema>;
 
 // ─── Module state ────────────────────────────────────────────────────────────
 
@@ -33,15 +29,6 @@ function extractDeviceCode(topic: string): string | null {
     return segments[1] ?? null;
   }
   return null;
-}
-
-/**
- * Determine whether the incoming distance_cm value is anomalous.
- * Simple heuristic: negative values or readings greater than 300 cm are
- * considered sensor anomalies.
- */
-function isDistanceAnomalous(distanceCm: number): boolean {
-  return distanceCm < 0 || distanceCm > 300;
 }
 
 // ─── Core processing logic ───────────────────────────────────────────────────
@@ -71,80 +58,24 @@ async function handleTelemetryMessage(topic: string, payload: Buffer): Promise<v
     return;
   }
 
-  const data: TelemetryPayload = result.data;
-  const db = getDb();
+  const data = result.data;
 
-  // Look up the smart bin by device_code
-  const [bin] = await db
-    .select()
-    .from(smartBins)
-    .where(eq(smartBins.deviceCode, deviceCode))
-    .limit(1);
-
-  if (!bin) {
-    console.warn(`[mqtt] Unknown device_code: ${deviceCode}`);
-    return;
-  }
-
-  const anomalyFlag = isDistanceAnomalous(data.distance_cm);
-
-  // Insert telemetry record
-  await db.insert(binTelemetry).values({
-    deviceId: bin.id,
+  // Delegate to shared telemetry processor
+  const processingResult = await processTelemetry(deviceCode, {
     fillLevelPercent: data.fill_level_percent,
     distanceCm: data.distance_cm,
     batteryVoltage: data.battery_voltage,
     signalStrength: data.signal_strength,
-    anomalyFlag,
   });
 
-  // Update last_seen_at on the smart bin
-  await db
-    .update(smartBins)
-    .set({ lastSeenAt: new Date(), updatedAt: new Date() })
-    .where(eq(smartBins.id, bin.id));
-
-  // ── Threshold checks & alert creation ────────────────────────────────────
-
-  // 1. Overflow alert: fill level >= bin threshold
-  if (data.fill_level_percent >= bin.thresholdPercent) {
-    await db.insert(alerts).values({
-      subdivisionId: bin.subdivisionId,
-      deviceId: bin.id,
-      alertType: "overflow",
-      severity: data.fill_level_percent >= 95 ? "critical" : "high",
-      message: `Bin ${deviceCode} fill level at ${data.fill_level_percent}% (threshold: ${bin.thresholdPercent}%)`,
-    });
-    console.info(
-      `[mqtt] Overflow alert created for ${deviceCode} (${data.fill_level_percent}%)`
-    );
+  if (!processingResult.success) {
+    console.warn(`[mqtt] ${processingResult.error}`);
+    return;
   }
 
-  // 2. Low battery alert: voltage below 3.3V
-  if (data.battery_voltage < 3.3) {
-    await db.insert(alerts).values({
-      subdivisionId: bin.subdivisionId,
-      deviceId: bin.id,
-      alertType: "low_battery",
-      severity: data.battery_voltage < 3.0 ? "critical" : "medium",
-      message: `Bin ${deviceCode} battery low at ${data.battery_voltage}V`,
-    });
+  if (processingResult.alertsCreated.length > 0) {
     console.info(
-      `[mqtt] Low battery alert created for ${deviceCode} (${data.battery_voltage}V)`
-    );
-  }
-
-  // 3. Sensor anomaly alert: impossible distance readings
-  if (anomalyFlag) {
-    await db.insert(alerts).values({
-      subdivisionId: bin.subdivisionId,
-      deviceId: bin.id,
-      alertType: "sensor_anomaly",
-      severity: "medium",
-      message: `Bin ${deviceCode} reported anomalous distance: ${data.distance_cm} cm`,
-    });
-    console.info(
-      `[mqtt] Sensor anomaly alert created for ${deviceCode} (distance: ${data.distance_cm} cm)`
+      `[mqtt] Telemetry processed for ${deviceCode}, alerts: ${processingResult.alertsCreated.join(", ")}`
     );
   }
 }

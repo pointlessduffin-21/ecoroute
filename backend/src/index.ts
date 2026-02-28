@@ -18,6 +18,7 @@ import serviceEventRoutes from "./routes/service-events";
 import notificationRoutes from "./routes/notifications";
 import analyticsRoutes from "./routes/analytics";
 import systemConfigRoutes from "./routes/system-config";
+import deviceRoutes from "./routes/device";
 
 // Services
 import * as mqttService from "./services/mqtt";
@@ -35,7 +36,7 @@ app.use(
   cors({
     origin: ["http://localhost:5173", "http://localhost:3001", "http://localhost", "http://localhost:80"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Device-API-Key"],
     credentials: true,
   })
 );
@@ -58,6 +59,7 @@ app.get("/health", (c) => {
 // ─── Public routes (no auth) ─────────────────────────────────────────────────
 
 app.route("/api/v1/auth", authRoutes);
+app.route("/api/v1/device", deviceRoutes);
 
 // ─── Protected routes (require auth) ─────────────────────────────────────────
 
