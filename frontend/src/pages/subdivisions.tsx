@@ -4,8 +4,16 @@ import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CardDescription,
+} from "@/components/ui/card";
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
 // Map related imports
 import { MapContainer, TileLayer, Polygon, Marker, Popup } from "react-leaflet";
@@ -69,9 +77,15 @@ export function SubdivisionsPage() {
   const defaultCenter: [number, number] = [14.5995, 120.9842];
 
   return (
-    <div className="flex h-full flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">Subdivisions</h1>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Subdivisions</h1>
+          <p className="text-sm text-muted-foreground">
+            Manage your operational zones and geofences.
+          </p>
+        </div>
         <Button>
           <Plus className="mr-2 h-4 w-4" />
           Add Subdivision
@@ -80,92 +94,108 @@ export function SubdivisionsPage() {
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Left Side: Table View */}
-        <div className="flex flex-col gap-4 rounded-xl border bg-card p-4">
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search subdivisions..."
-                className="pl-8"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+        <Card className="h-[550px] flex flex-col overflow-hidden">
+          <CardContent className="flex-1 flex flex-col p-0">
+            {/* Search Bar Area */}
+            <div className="p-6 pb-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search subdivisions..."
+                  className="pl-9 bg-muted/40 border-muted-foreground/20 focus-visible:ring-1 transition-all"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-md border h-[500px] overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Contact</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="h-24 text-center">
-                      Loading data...
-                    </TableCell>
-                  </TableRow>
-                ) : filteredSubdivisions.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="h-24 text-center">
-                      No subdivisions found.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredSubdivisions.map((sub) => (
-                    <TableRow key={sub.id}>
-                      <TableCell className="font-medium">{sub.code}</TableCell>
-                      <TableCell>{sub.name}</TableCell>
-                      <TableCell>
-                        <div className="text-sm">
-                          <div>{sub.contactEmail || "No email"}</div>
-                          <div className="text-muted-foreground text-xs">{sub.contactPhone || "No phone"}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                            sub.isActive
-                              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                              : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
-                          }`}
-                        >
-                          {sub.isActive ? "Active" : "Inactive"}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+            {/* Table Area */}
+            <div className="flex-1 overflow-auto px-6 pb-6 mt-2">
+              <div className="rounded-xl border bg-card overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-muted/30">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="font-semibold">Code</TableHead>
+                      <TableHead className="font-semibold">Name</TableHead>
+                      <TableHead className="font-semibold">Contact</TableHead>
+                      <TableHead className="font-semibold">Status</TableHead>
+                      <TableHead className="w-[80px] text-right"></TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center space-y-2">
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                            <span className="text-sm">Loading subdivisions...</span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : filteredSubdivisions.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center space-y-1">
+                            <MapIcon className="h-8 w-8 text-muted-foreground/50 mb-2" />
+                            <span className="text-sm font-medium">No results found</span>
+                            <span className="text-xs">Try adjusting your search query.</span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredSubdivisions.map((sub) => (
+                        <TableRow key={sub.id} className="group transition-colors">
+                          <TableCell className="font-medium">{sub.code}</TableCell>
+                          <TableCell className="font-medium text-foreground/90">{sub.name}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col space-y-0.5">
+                              <span className="text-sm">{sub.contactEmail || "No email"}</span>
+                              <span className="text-xs text-muted-foreground">{sub.contactPhone || "No phone"}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge 
+                               variant={sub.isActive ? "default" : "secondary"}
+                               className={sub.isActive ? "bg-green-100 text-green-700 hover:bg-green-100/80 dark:bg-green-900/30 dark:text-green-400" : ""}
+                            >
+                               {sub.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary">
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Right Side: Map View */}
-        <div className="flex flex-col gap-4 rounded-xl border bg-card p-4 h-[590px]">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold flex items-center gap-2">
-              <MapIcon className="h-4 w-4" /> Geofence Map
-            </h3>
-            <span className="text-xs text-muted-foreground">Provider: OpenStreetMap</span>
+        <Card className="h-[550px] flex flex-col overflow-hidden shadow-sm">
+        <CardHeader className="pb-3 flex flex-row items-center justify-between border-b bg-muted/10">
+          <div className="space-y-1 mt-1.5">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+              <MapIcon className="h-4 w-4 text-primary" /> Geofence Map
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Viewing spatial boundaries of subdivisions.
+            </CardDescription>
           </div>
-          
-          <div className="flex-1 rounded-md overflow-hidden border z-0 relative">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground opacity-80">Provider: OpenStreetMap</span>
+        </CardHeader>
+        <CardContent className="flex-1 p-0 relative z-0 bg-muted/20">
+          <div className="h-full w-full">
              <MapContainer 
               center={defaultCenter} 
               zoom={13} 
@@ -200,7 +230,8 @@ export function SubdivisionsPage() {
               })}
             </MapContainer>
           </div>
-        </div>
+        </CardContent>
+      </Card>
       </div>
     </div>
   );
