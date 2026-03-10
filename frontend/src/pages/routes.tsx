@@ -36,6 +36,23 @@ import {
   TrendingUp,
 } from "lucide-react";
 
+// Map related imports
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+
+// Fix Leaflet's default icon missing issue in React
+import L from "leaflet";
+import icon from "leaflet/dist/images/marker-icon.png";
+import iconShadow from "leaflet/dist/images/marker-shadow.png";
+
+let DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+L.Marker.prototype.options.icon = DefaultIcon;
+
 // ---------------------------------------------------------------------------
 // Helpers & constants
 // ---------------------------------------------------------------------------
@@ -204,8 +221,28 @@ export function RoutesPage() {
 
   // ---- Render ----
 
+  // ---- Map Helpers ----
+  // Default to Manila
+  const defaultCenter: [number, number] = [14.5995, 120.9842];
+  
+  // Get active route coordinates for Polyline
+  const getActiveRouteCoords = (): [number, number][] => {
+    if (!expandedRouteId) return [];
+    const stops = getStopsForRoute(expandedRouteId);
+    if (!stops || stops.length === 0) return [];
+    
+    // Sort stops and extract coordinates
+    return stops
+      .sort((a, b) => a.sequenceOrder - b.sequenceOrder)
+      // Note: We need bin data to have lat/lon in the RouteStop model
+      // Our API type might not have them, so we skip drawing the line for now 
+      // if coordinates aren't returned with stops.
+      .filter(s => (s as any).lat && (s as any).lon)
+      .map(s => [(s as any).lat, (s as any).lon]);
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col h-full space-y-6">
       {/* Page header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -467,30 +504,33 @@ export function RoutesPage() {
         ))}
       </div>
 
-      {/* Loading / Error states */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-16">
-          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      )}
-
-      {isError && !isLoading && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-          Failed to load routes from server.
-        </div>
-      )}
-
-      {/* Routes table */}
-      {!isLoading && (
-        <>
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-              <MapPin className="mb-3 h-10 w-10" />
-              <p className="text-sm">No routes match the current filter.</p>
+      {/* Main Content Layout */}
+      <div className="grid gap-6 md:grid-cols-2 flex-1 min-h-[500px]">
+        
+        {/* Left Side: Routes Table */}
+        <div className="flex flex-col gap-4">
+          {isLoading && (
+            <div className="flex items-center justify-center py-16">
+              <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
+          )}
+
+          {isError && !isLoading && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+              Failed to load routes from server.
+            </div>
+          )}
+
+          {!isLoading && (
+            <>
+              {filtered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-muted-foreground rounded-xl border bg-card">
+                  <MapPin className="mb-3 h-10 w-10" />
+                  <p className="text-sm">No routes match the current filter.</p>
+                </div>
+              ) : (
+                <Card className="h-full overflow-hidden flex flex-col">
+                  <CardContent className="p-0 flex-1 overflow-auto max-h-[600px]">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -532,6 +572,65 @@ export function RoutesPage() {
           )}
         </>
       )}
+      </div>
+
+        {/* Right Side: Map View */}
+        <div className="flex flex-col gap-4 rounded-xl border bg-card p-4 h-[600px] sticky top-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold flex items-center gap-2">
+              <MapPin className="h-4 w-4" /> Route Visualizer
+            </h3>
+            <span className="text-xs text-muted-foreground">
+              {expandedRouteId ? `Viewing Route ${truncateId(expandedRouteId)}` : "Select a route to view its path"}
+            </span>
+          </div>
+          
+          <div className="flex-1 rounded-md overflow-hidden border z-0 relative bg-muted/20">
+             <MapContainer 
+              center={defaultCenter} 
+              zoom={12} 
+              scrollWheelZoom={true} 
+              style={{ height: '100%', width: '100%', zIndex: 0 }}
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+              
+              {/* Draw Route Polyline if coordinates exist */}
+              {expandedRouteId && getActiveRouteCoords().length > 0 && (
+                <Polyline 
+                  positions={getActiveRouteCoords()} 
+                  color="#0ea5e9"
+                  weight={4}
+                  opacity={0.8}
+                />
+              )}
+              
+              {/* Draw Markers for Stops */}
+              {expandedRouteId && getStopsForRoute(expandedRouteId).map((stop) => {
+                 // Skip if no coordinates
+                 if (!(stop as any).lat || !(stop as any).lon) return null;
+                 
+                 return (
+                   <Marker 
+                    key={stop.id} 
+                    position={[(stop as any).lat, (stop as any).lon]}
+                   >
+                     <Popup>
+                       <div className="font-semibold">Stop {stop.sequenceOrder}</div>
+                       <div className="text-sm text-muted-foreground">Device: {stop.deviceId}</div>
+                       <Badge variant={stopStatusBadgeVariant[stop.status]} className="mt-1">
+                         {stop.status}
+                       </Badge>
+                     </Popup>
+                   </Marker>
+                 );
+              })}
+            </MapContainer>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -12,6 +12,8 @@ import { SettingsPage } from "@/pages/settings";
 import { MyRoutesPage } from "@/pages/my-routes";
 import { RouteExecutionPage } from "@/pages/route-execution";
 
+import { SubdivisionsPage } from "@/pages/subdivisions";
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
   if (isLoading) {
@@ -61,6 +63,7 @@ export function App() {
         <Route path="settings" element={<SettingsPage />} />
         <Route path="my-routes" element={<MyRoutesPage />} />
         <Route path="routes/:routeId/execute" element={<RouteExecutionPage />} />
+        <Route path="subdivisions" element={<SubdivisionsPage />} />
       </Route>
     </Routes>
   );

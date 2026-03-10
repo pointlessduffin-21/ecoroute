@@ -72,7 +72,7 @@ services:
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
-      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      ORS_API_KEY: ${ORS_API_KEY:-}
       JWT_SECRET: ${JWT_SECRET:-ecoroute-dev-jwt-secret-2026}
       DEVICE_API_KEY: ${DEVICE_API_KEY:-ecoroute-device-key-change-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
@@ -98,7 +98,7 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-ecoroute_dev}@postgres:5432/ecoroute
-      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      ORS_API_KEY: ${ORS_API_KEY:-}
     volumes:
       - ai_models:/app/models
     depends_on:
