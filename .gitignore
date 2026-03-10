@@ -25,3 +25,5 @@ mobile/local.properties
 # OS
 .DS_Store
 Thumbs.db
+venv/
+ai-service/venv/
