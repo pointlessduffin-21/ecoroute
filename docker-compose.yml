@@ -4,6 +4,7 @@ services:
   # ─── PostgreSQL + PostGIS ────────────────────────────────────────────────────
   postgres:
     image: postgis/postgis:16-3.4
+    platform: linux/amd64
     container_name: ecoroute-postgres
     restart: unless-stopped
     environment:
