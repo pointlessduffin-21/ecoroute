@@ -7,4 +7,5 @@ export default {
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },
+  tablesFilter: ["!spatial_ref_sys"],
 } satisfies Config;
