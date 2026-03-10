@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     MODEL_PATH: str = "./models/lstm_model.pkl"
     PREDICTION_HORIZON_HOURS: int = 24
     THRESHOLD_PERCENT: float = 80.0
-    GOOGLE_MAPS_API_KEY: Optional[str] = None
+    ORS_API_KEY: Optional[str] = None
 
     # Training hyperparameters
     LSTM_HIDDEN_SIZE: int = 64

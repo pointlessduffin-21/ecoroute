@@ -132,7 +132,7 @@ async def optimize_collection_route(request: OptimizeRequest):
         }
 
         # Run the CVRP optimizer
-        result = optimize_route(
+        result = await optimize_route(
             depot=depot,
             bins=optimizer_bins,
             num_vehicles=request.num_vehicles,

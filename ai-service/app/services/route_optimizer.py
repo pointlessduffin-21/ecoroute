@@ -4,6 +4,7 @@ from typing import Optional
 
 import numpy as np
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
+import httpx
 
 from app.config import settings
 
@@ -39,12 +40,14 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return EARTH_RADIUS_KM * c
 
 
-def compute_distance_matrix(
+async def compute_distance_matrix(
     depot: dict, bins: list[dict]
 ) -> list[list[int]]:
     """
-    Compute a distance matrix between all locations (depot + bins)
-    using the Haversine formula.
+    Compute a distance matrix between all locations (depot + bins).
+    
+    If ORS_API_KEY is configured, it uses the OpenRouteService API for realistic
+    driving distances. Otherwise, it falls back to the Haversine formula.
 
     The distance values are stored as integers in meters for OR-Tools compatibility.
 
@@ -60,6 +63,51 @@ def compute_distance_matrix(
         locations.append({"lat": b["lat"], "lon": b["lon"]})
 
     n = len(locations)
+    
+    # Use OpenRouteService if configured and we have valid points
+    if settings.ORS_API_KEY and n > 1:
+        try:
+            # ORS requires [longitude, latitude] arrays
+            coordinates = [[loc["lon"], loc["lat"]] for loc in locations]
+            
+            headers = {
+                "Accept": "application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8",
+                "Authorization": settings.ORS_API_KEY,
+                "Content-Type": "application/json; charset=utf-8"
+            }
+            body = {
+                "locations": coordinates,
+                "metrics": ["distance"],
+                "units": "m"
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.openrouteservice.org/v2/matrix/driving-car",
+                    json=body,
+                    headers=headers,
+                    timeout=15.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    distances_float = data.get("distances", [])
+                    
+                    if len(distances_float) == n and len(distances_float[0]) == n:
+                        # Convert all floats to integers
+                        matrix = [[int(val or 0) for val in row] for row in distances_float]
+                        logger.info(f"Successfully retrieved ORS driving matrix for {n} points")
+                        return matrix
+                    else:
+                        logger.error("ORS returned malformed distance matrix dimensions")
+                else:
+                    logger.error(f"ORS API error {response.status_code}: {response.text}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to query ORS Matrix API: {str(e)}")
+            
+    # Fallback to Haversine if ORS isn't configured or failed
+    logger.info("Falling back to Haversine formula for distance matrix")
     matrix = [[0] * n for _ in range(n)]
 
     for i in range(n):
@@ -109,7 +157,7 @@ def _calculate_naive_distance(
     return total
 
 
-def optimize_route(
+async def optimize_route(
     depot: dict,
     bins: list[dict],
     num_vehicles: int = 1,
@@ -156,7 +204,7 @@ def optimize_route(
 
     # Compute distance matrix if not provided
     if distance_matrix is None:
-        distance_matrix = compute_distance_matrix(depot, bins)
+        distance_matrix = await compute_distance_matrix(depot, bins)
 
     num_locations = len(bins) + 1  # +1 for depot
 
