@@ -1,15 +1,15 @@
-#!/usr/bin/env -S deno run --allow-net --allow-env
+#!/usr/bin/env bun
 /*
  * EcoRoute Firmware Simulator
  *
- * Simulates 7 virtual ESP32 smart bins (ECO-BIN-1002 through ECO-BIN-1008)
+ * Simulates 7 virtual smart bins (ECO-BIN-1002 through ECO-BIN-1008)
  * sending HTTP telemetry to the backend. ECO-BIN-1001 is excluded because
  * it runs on a physical ESP32 with a real ultrasonic sensor.
  *
  * Usage:
- *   deno run --allow-net --allow-env firmware/simulator/simulate.ts
- *   deno run --allow-net --allow-env firmware/simulator/simulate.ts --interval 10
- *   deno run --allow-net --allow-env firmware/simulator/simulate.ts --once
+ *   bun run firmware/simulator/simulate.ts
+ *   bun run firmware/simulator/simulate.ts --interval 10
+ *   bun run firmware/simulator/simulate.ts --once
  *
  * Environment:
  *   API_URL          Backend telemetry endpoint (default: http://localhost:3000/api/v1/device/telemetry)
@@ -18,10 +18,10 @@
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const API_URL = Deno.env.get("API_URL") ?? "http://localhost:3000/api/v1/device/telemetry";
-const API_KEY = Deno.env.get("DEVICE_API_KEY") ?? "ecoroute-device-key-change-in-production";
+const API_URL = process.env.API_URL ?? "http://localhost:3000/api/v1/device/telemetry";
+const API_KEY = process.env.DEVICE_API_KEY ?? "ecoroute-device-key-change-in-production";
 
-const args = Deno.args;
+const args = process.argv.slice(2);
 function getArg(name: string, fallback: string): string {
   const idx = args.indexOf(`--${name}`);
   return idx >= 0 && args[idx + 1] ? args[idx + 1] : fallback;
