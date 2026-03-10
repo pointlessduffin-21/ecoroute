@@ -234,11 +234,8 @@ export function RoutesPage() {
     // Sort stops and extract coordinates
     return stops
       .sort((a, b) => a.sequenceOrder - b.sequenceOrder)
-      // Note: We need bin data to have lat/lon in the RouteStop model
-      // Our API type might not have them, so we skip drawing the line for now 
-      // if coordinates aren't returned with stops.
-      .filter(s => (s as any).lat && (s as any).lon)
-      .map(s => [(s as any).lat, (s as any).lon]);
+      .filter(s => s.latitude && s.longitude)
+      .map(s => [s.latitude!, s.longitude!]);
   };
 
   return (
@@ -254,13 +251,14 @@ export function RoutesPage() {
           </p>
         </div>
         <Button
+          className="bg-[#1da253] text-white hover:bg-[#1da253]/90"
           onClick={() => {
             setShowGenerateModal(true);
             setGenerateResult(null);
             generateRouteMutation.reset();
           }}
         >
-          <Play className="h-4 w-4" />
+          <Play className="h-4 w-4 mr-1.5" />
           Generate Route
         </Button>
       </div>
@@ -491,17 +489,25 @@ export function RoutesPage() {
       )}
 
       {/* Status filter tabs */}
-      <div className="flex flex-wrap gap-2">
-        {STATUS_TABS.map((tab) => (
-          <Button
-            key={tab.value}
-            variant={statusFilter === tab.value ? "default" : "outline"}
-            size="sm"
-            onClick={() => setStatusFilter(tab.value)}
-          >
-            {tab.label}
-          </Button>
-        ))}
+      <div className="flex gap-2">
+        {STATUS_TABS.map((tab) => {
+          const isActive = statusFilter === tab.value;
+          return (
+            <Button
+              key={tab.value}
+              variant="outline"
+              className={cn(
+                "rounded-md px-4 py-2 font-medium h-9 border",
+                isActive 
+                  ? "bg-[#1da253] text-white hover:bg-[#1da253]/90 border-transparent shadow-sm"
+                  : "bg-white text-foreground hover:bg-muted/50 border-gray-200"
+              )}
+              onClick={() => setStatusFilter(tab.value)}
+            >
+              {tab.label}
+            </Button>
+          )
+        })}
       </div>
 
       {/* Main Content Layout */}
@@ -533,16 +539,11 @@ export function RoutesPage() {
                   <CardContent className="p-0 flex-1 overflow-auto max-h-[600px]">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Route ID</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Driver</TableHead>
-                      <TableHead>Scheduled</TableHead>
-                      <TableHead className="text-right">Distance</TableHead>
-                      <TableHead className="text-right">Duration</TableHead>
-                      <TableHead className="text-right">Stops</TableHead>
-                      <TableHead className="text-right">Score</TableHead>
-                      <TableHead className="w-10" />
+                    <TableRow className="border-b">
+                      <TableHead className="font-semibold text-muted-foreground h-11">Route ID</TableHead>
+                      <TableHead className="font-semibold text-muted-foreground h-11">Status</TableHead>
+                      <TableHead className="font-semibold text-muted-foreground h-11">Driver</TableHead>
+                      <TableHead className="font-semibold text-muted-foreground h-11">Scheduled</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -575,17 +576,17 @@ export function RoutesPage() {
       </div>
 
         {/* Right Side: Map View */}
-        <div className="flex flex-col gap-4 rounded-xl border bg-card p-4 h-[600px] sticky top-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold flex items-center gap-2">
-              <MapPin className="h-4 w-4" /> Route Visualizer
+        <div className="flex flex-col rounded-xl border bg-white overflow-hidden shadow-sm h-[600px] sticky top-4">
+          <div className="flex items-center justify-between p-4 border-b bg-white">
+            <h3 className="text-base font-semibold flex items-center gap-2 text-foreground">
+              <MapPin className="h-5 w-5 text-foreground" /> Route Visualizer
             </h3>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground font-medium mr-2">
               {expandedRouteId ? `Viewing Route ${truncateId(expandedRouteId)}` : "Select a route to view its path"}
             </span>
           </div>
           
-          <div className="flex-1 rounded-md overflow-hidden border z-0 relative bg-muted/20">
+          <div className="flex-1 z-0 relative bg-muted/20">
              <MapContainer 
               center={defaultCenter} 
               zoom={12} 
@@ -610,12 +611,12 @@ export function RoutesPage() {
               {/* Draw Markers for Stops */}
               {expandedRouteId && getStopsForRoute(expandedRouteId).map((stop) => {
                  // Skip if no coordinates
-                 if (!(stop as any).lat || !(stop as any).lon) return null;
+                 if (!stop.latitude || !stop.longitude) return null;
                  
                  return (
                    <Marker 
                     key={stop.id} 
-                    position={[(stop as any).lat, (stop as any).lon]}
+                    position={[stop.latitude, stop.longitude]}
                    >
                      <Popup>
                        <div className="font-semibold">Stop {stop.sequenceOrder}</div>
@@ -656,63 +657,45 @@ function RouteRow({
   truncateId: (id: string) => string;
   driverName: (id: string | null) => string;
 }) {
+  const badgeClasses: Record<string, string> = {
+    planned: "bg-blue-100 text-blue-700 hover:bg-blue-100/80 border-transparent rounded-full font-semibold px-3 py-0.5",
+    in_progress: "bg-[#fef3c7] text-[#92400e] hover:bg-[#fef3c7]/80 border-transparent rounded-full font-semibold px-3 py-0.5",
+    completed: "bg-green-100 text-green-700 hover:bg-green-100/80 border-transparent rounded-full font-semibold px-3 py-0.5",
+    cancelled: "bg-red-500 text-white hover:bg-red-500/80 border-transparent rounded-full font-semibold px-3 py-0.5",
+  };
+
   return (
     <>
       <TableRow
-        className={cn("cursor-pointer", isExpanded && "bg-muted/30")}
+        className={cn("cursor-pointer hover:bg-muted/50 transition-colors border-b", isExpanded && "bg-muted/30")}
         onClick={onToggle}
       >
-        <TableCell className="font-mono text-xs">
+        <TableCell className="font-mono text-xs py-4">
           {truncateId(route.id)}
         </TableCell>
-        <TableCell>
-          <Badge variant={statusBadgeVariant[route.status]}>
+        <TableCell className="py-4">
+          <Badge className={badgeClasses[route.status]} variant="outline">
             {statusLabel[route.status]}
           </Badge>
         </TableCell>
-        <TableCell className="text-sm">
+        <TableCell className="text-sm py-4">
           {driverName(route.assignedDriverId)}
         </TableCell>
-        <TableCell className="text-sm">
-          {route.scheduledDate
-            ? formatDateTime(route.scheduledDate)
-            : "Not scheduled"}
-        </TableCell>
-        <TableCell className="text-right text-sm">
-          {route.estimatedDistanceKm != null
-            ? `${route.estimatedDistanceKm.toFixed(1)} km`
-            : "-"}
-        </TableCell>
-        <TableCell className="text-right text-sm">
-          {route.estimatedDurationMinutes != null
-            ? `${route.estimatedDurationMinutes} min`
-            : "-"}
-        </TableCell>
-        <TableCell className="text-right text-sm">{stops.length}</TableCell>
-        <TableCell
-          className={cn(
-            "text-right text-sm font-semibold",
-            scoreColor(route.optimizationScore)
+        <TableCell className="text-sm py-4">
+          {route.scheduledDate ? (
+            <div className="whitespace-pre-line leading-tight text-muted-foreground">
+              {formatDateTime(route.scheduledDate).replace(", ", ",\n")}
+            </div>
+          ) : (
+            "Not scheduled"
           )}
-        >
-          {route.optimizationScore != null
-            ? `${route.optimizationScore}%`
-            : "-"}
-        </TableCell>
-        <TableCell>
-          <Eye
-            className={cn(
-              "h-4 w-4 text-muted-foreground transition-transform",
-              isExpanded && "rotate-180 text-primary"
-            )}
-          />
         </TableCell>
       </TableRow>
 
       {/* Expanded detail section */}
       {isExpanded && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={9} className="bg-muted/20 p-0">
+          <TableCell colSpan={4} className="bg-muted/20 p-0">
             <div className="px-6 py-4">
               <h4 className="mb-3 text-sm font-semibold">
                 Route Stops ({stops.length})
