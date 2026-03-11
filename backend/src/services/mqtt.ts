@@ -13,7 +13,7 @@ const telemetrySchema = z.object({
 
 // ─── Module state ────────────────────────────────────────────────────────────
 
-const TOPIC = "ecoroute/+/telemetry";
+const TOPIC = "ecoroute/trash_can/+";
 
 let client: mqtt.MqttClient | null = null;
 
@@ -21,12 +21,12 @@ let client: mqtt.MqttClient | null = null;
 
 /**
  * Extract the device_code from a topic string.
- * Topic format: ecoroute/<device_code>/telemetry
+ * Topic format: ecoroute/trash_can/<device_code>
  */
 function extractDeviceCode(topic: string): string | null {
   const segments = topic.split("/");
-  if (segments.length === 3 && segments[0] === "ecoroute" && segments[2] === "telemetry") {
-    return segments[1] ?? null;
+  if (segments.length === 3 && segments[0] === "ecoroute" && segments[1] === "trash_can") {
+    return segments[2] ?? null;
   }
   return null;
 }
@@ -93,7 +93,7 @@ export function start(): void {
     return;
   }
 
-  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://localhost:1883";
+  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://109.123.238.215:1883";
   const username = process.env.MQTT_USERNAME || "ecoroute";
   const password = process.env.MQTT_PASSWORD || "secret";
 

@@ -3,7 +3,7 @@
 #include "config_manager.h"
 #include "sensor_reader.h"
 #include "wifi_manager.h"
-#include "http_client.h"
+#include "mqtt_client.h"
 #include "ble_provisioning.h"
 
 // ─── Global objects ─────────────────────────────────────────────────────────
@@ -11,7 +11,7 @@
 ConfigManager configManager;
 SensorReader sensors;
 WifiManager wifi;
-EcoRouteHttpClient httpClient;
+EcoRouteMqttClient mqttClient;
 BleProvisioning ble;
 
 // ─── Deep sleep helper ──────────────────────────────────────────────────────
@@ -130,14 +130,12 @@ void runReportingMode() {
   String ssid = configManager.getWifiSsid();
   String pass = configManager.getWifiPassword();
   String deviceCode = configManager.getDeviceCode();
-  String apiUrl = configManager.getApiUrl();
-  String apiKey = configManager.getApiKey();
   float binHeight = configManager.getBinHeight();
   uint32_t interval = configManager.getReportInterval();
 
   Serial.printf("[main] Device: %s | Bin: %.0f cm | Interval: %us\n",
     deviceCode.c_str(), binHeight, interval);
-  Serial.printf("[main] API: %s\n", apiUrl.c_str());
+  Serial.printf("[main] MQTT: %s:%d\n", MQTT_BROKER_HOST, MQTT_BROKER_PORT);
 
   // Turn on LED solid during reporting
   pinMode(LED_PIN, OUTPUT);
@@ -154,18 +152,17 @@ void runReportingMode() {
   sensors.begin();
   SensorReading reading = sensors.readAll(binHeight);
 
-  // Step 3: POST telemetry
-  TelemetryResponse resp = httpClient.postTelemetry(
-    apiUrl.c_str(),
-    apiKey.c_str(),
+  // Step 3: Publish telemetry via MQTT
+  // Topic: ecoroute/trash_can/<device_code>
+  MqttPublishResult result = mqttClient.publishTelemetry(
     deviceCode.c_str(),
     reading
   );
 
-  if (resp.success) {
-    Serial.printf("[main] Telemetry sent! ID: %d\n", resp.telemetryId);
+  if (result.success) {
+    Serial.println("[main] Telemetry published!");
   } else {
-    Serial.printf("[main] Telemetry failed: %s\n", resp.error.c_str());
+    Serial.printf("[main] Telemetry failed: %s\n", result.error.c_str());
   }
 
   // Step 4: Disconnect WiFi and sleep
