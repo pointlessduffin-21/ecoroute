@@ -282,7 +282,7 @@ export function DashboardPage() {
                         borderRadius: "0.5rem",
                         fontSize: 13,
                       }}
-                      formatter={(value: number | undefined) => [`${value ?? 0} bins`, "Count"]}
+                      formatter={(value) => [`${value ?? 0} bins`, "Count"]}
                     />
                     <Bar dataKey="count" radius={[6, 6, 0, 0]}>
                       {fillLevelChartData.map((entry, idx) => (
