@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import api from "@/lib/api";
 import type {
@@ -234,35 +234,31 @@ function thresholdBg(minutes: number): string {
 
 export function AnalyticsPage() {
   // ---- AI Insights state ----
-  const [selectedInsightType, setSelectedInsightType] = useState<string | null>(null);
-  const [insightResult, setInsightResult] = useState<AIInsight | null>(null);
-  const [insightError, setInsightError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<Record<string, AIInsight | null>>({});
+  const [insightErrors, setInsightErrors] = useState<Record<string, string>>({});
+  const [insightsLoading, setInsightsLoading] = useState<Record<string, boolean>>({});
 
-  const insightMutation = useMutation({
-    mutationFn: async (type: string) => {
-      const res = await api.post<AIInsight>("/ai/insights", { type });
-      return res.data;
-    },
-    onSuccess: (data) => {
-      setInsightResult(data);
-      setInsightError(null);
-    },
-    onError: (error: unknown) => {
-      setInsightResult(null);
-      const errData = (error as { response?: { data?: { error?: string } } })?.response?.data;
-      if (errData?.error?.toLowerCase().includes("not configured") || errData?.error?.toLowerCase().includes("disabled")) {
-        setInsightError("AI is not configured. Please set up an AI provider in Settings.");
-      } else {
-        setInsightError(errData?.error ?? "Failed to generate AI insight. Please try again.");
-      }
-    },
-  });
-
-  const handleInsightClick = (type: string) => {
-    setSelectedInsightType(type);
-    setInsightError(null);
-    insightMutation.mutate(type);
-  };
+  // Auto-run all insight types on mount
+  useEffect(() => {
+    for (const item of INSIGHT_TYPES) {
+      setInsightsLoading((prev) => ({ ...prev, [item.type]: true }));
+      api
+        .post<AIInsight>("/ai/insights", { type: item.type })
+        .then((res) => {
+          setInsights((prev) => ({ ...prev, [item.type]: res.data }));
+        })
+        .catch((error: unknown) => {
+          const errData = (error as { response?: { data?: { error?: string } } })?.response?.data;
+          const msg = errData?.error?.toLowerCase().includes("not configured")
+            ? "AI not configured"
+            : errData?.error ?? "Failed to generate";
+          setInsightErrors((prev) => ({ ...prev, [item.type]: msg }));
+        })
+        .finally(() => {
+          setInsightsLoading((prev) => ({ ...prev, [item.type]: false }));
+        });
+    }
+  }, []);
 
   // ---- Predictions state ----
   const [predictions, setPredictions] = useState<FillPrediction[]>([]);
@@ -411,111 +407,71 @@ export function AnalyticsPage() {
             <div>
               <CardTitle className="text-base">AI Insights</CardTitle>
               <CardDescription>
-                Get AI-powered analysis of your waste collection data
+                AI-powered analysis of your waste collection data
               </CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {/* Insight type buttons */}
-          <div className="flex flex-wrap gap-2 mb-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {INSIGHT_TYPES.map((item) => {
               const Icon = item.icon;
+              const loading = insightsLoading[item.type];
+              const error = insightErrors[item.type];
+              const result = insights[item.type];
+
               return (
-                <Button
+                <div
                   key={item.type}
-                  variant={selectedInsightType === item.type ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => handleInsightClick(item.type)}
-                  disabled={insightMutation.isPending}
+                  className="rounded-lg border border-border p-4 space-y-2"
                 >
-                  <Icon className="mr-1.5 h-3.5 w-3.5" />
-                  {item.label}
-                </Button>
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-purple-500" />
+                    <span className="text-sm font-medium">{item.label}</span>
+                  </div>
+
+                  {loading && (
+                    <div className="flex items-center gap-2 py-4">
+                      <Loader2 className="h-4 w-4 animate-spin text-purple-500" />
+                      <span className="text-xs text-muted-foreground">Generating...</span>
+                    </div>
+                  )}
+
+                  {error && !loading && (
+                    <div className="flex items-center gap-2 py-2">
+                      <AlertCircle className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-xs text-muted-foreground">{error}</span>
+                    </div>
+                  )}
+
+                  {result && !loading && !error && (
+                    <div className="text-xs text-foreground/80 max-h-40 overflow-y-auto space-y-1">
+                      {result.insight.split("\n").map((line, i) => {
+                        if (!line.trim()) return null;
+                        if (line.trim().startsWith("**") || line.trim().startsWith("##")) {
+                          return (
+                            <p key={i} className="font-semibold text-foreground text-xs mt-1">
+                              {line.replace(/[#*]/g, "").trim()}
+                            </p>
+                          );
+                        }
+                        return <p key={i}>{line.trim()}</p>;
+                      })}
+                    </div>
+                  )}
+
+                  {!loading && !error && !result && (
+                    <p className="text-xs text-muted-foreground py-2">No data</p>
+                  )}
+                </div>
               );
             })}
           </div>
 
-          {/* Loading state */}
-          {insightMutation.isPending && (
-            <div className="flex items-center justify-center py-8">
-              <div className="flex flex-col items-center gap-3">
-                <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
-                <p className="text-sm text-muted-foreground">Generating AI insight...</p>
-              </div>
-            </div>
-          )}
-
-          {/* Error state */}
-          {insightError && !insightMutation.isPending && (
-            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-destructive">{insightError}</p>
-                  {insightError.includes("Settings") && (
-                    <a
-                      href="/settings"
-                      className="mt-1 inline-flex items-center gap-1 text-xs text-destructive underline hover:no-underline"
-                    >
-                      <Settings className="h-3 w-3" />
-                      Go to Settings
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Insight result */}
-          {insightResult && !insightMutation.isPending && !insightError && (
-            <div className="rounded-lg border border-purple-200 bg-purple-50/50 p-4 space-y-3">
-              <div className="prose prose-sm max-w-none text-foreground">
-                {insightResult.insight.split("\n").map((line, i) => {
-                  if (!line.trim()) return <br key={i} />;
-                  // Bold headers (lines starting with ** or ##)
-                  if (line.trim().startsWith("**") || line.trim().startsWith("##")) {
-                    const text = line.replace(/[#*]/g, "").trim();
-                    return (
-                      <p key={i} className="font-semibold text-foreground mt-2 mb-1">
-                        {text}
-                      </p>
-                    );
-                  }
-                  // Bullet points
-                  if (line.trim().startsWith("-") || line.trim().startsWith("*")) {
-                    return (
-                      <p key={i} className="ml-4 text-sm text-foreground/90">
-                        {line.trim()}
-                      </p>
-                    );
-                  }
-                  return (
-                    <p key={i} className="text-sm text-foreground/90">
-                      {line}
-                    </p>
-                  );
-                })}
-              </div>
-              <div className="flex items-center gap-3 pt-2 border-t border-purple-200">
-                <Badge variant="secondary" className="text-[10px]">
-                  {insightResult.provider}
-                </Badge>
-                <span className="text-[10px] text-muted-foreground">
-                  Model: {insightResult.model}
-                </span>
-                <span className="text-[10px] text-muted-foreground ml-auto">
-                  <Clock className="inline-block h-3 w-3 mr-0.5" />
-                  {new Date(insightResult.generatedAt).toLocaleString()}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!insightMutation.isPending && !insightResult && !insightError && (
+          {/* Show empty fallback if nothing ran */}
+          {Object.keys(insights).length === 0 && Object.keys(insightErrors).length === 0 && Object.values(insightsLoading).every((v) => !v) && (
             <div className="flex items-center justify-center py-6 text-muted-foreground">
-              <p className="text-sm">Select an insight type above to generate AI analysis.</p>
+              <p className="text-sm">AI insights are being generated...</p>
             </div>
           )}
         </CardContent>
