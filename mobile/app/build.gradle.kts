@@ -18,7 +18,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        // API base URL — use 10.0.2.2 for Android emulator (maps to host localhost)
+        // API base URL — 10.0.2.2 maps to host localhost from Android emulator
         buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:3000/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

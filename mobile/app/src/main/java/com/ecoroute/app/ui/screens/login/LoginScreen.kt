@@ -2,6 +2,7 @@ package com.ecoroute.app.ui.screens.login
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -11,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -22,6 +24,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
@@ -39,15 +42,16 @@ fun LoginScreen(
         if (authState.isLoggedIn) onLoginSuccess()
     }
 
+    // Light gradient background matching the web version
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF16A34A).copy(alpha = 0.1f),
-                        Color(0xFF059669).copy(alpha = 0.05f),
-                        MaterialTheme.colorScheme.background,
+                        Color(0xFFF0FDF4),  // green-50
+                        Color(0xFFECFDF5),  // emerald-50
+                        Color(0xFFF0FDFA),  // teal-50
                     )
                 )
             ),
@@ -58,41 +62,52 @@ fun LoginScreen(
                 .fillMaxWidth()
                 .padding(24.dp),
             shape = RoundedCornerShape(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White.copy(alpha = 0.95f)
+            ),
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Logo
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(56.dp),
+                // Logo — green circle with bin icon
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF22C55E),  // green-500
+                                    Color(0xFF059669),  // emerald-600
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Filled.Eco,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(32.dp),
-                        )
-                    }
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp),
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
 
+                // Title
                 Text(
                     "EcoRoute",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = Color(0xFF1F2937),
                 )
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    "Smart Waste Management",
+                    "Smart Waste Management Platform",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Color(0xFF6B7280),
                 )
 
                 Spacer(Modifier.height(32.dp))
@@ -101,7 +116,7 @@ fun LoginScreen(
                 if (authState.error != null) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.errorContainer,
+                        color = Color(0xFFFEE2E2),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(
@@ -112,100 +127,150 @@ fun LoginScreen(
                             Icon(
                                 Icons.Filled.Error,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp),
+                                tint = Color(0xFFDC2626),
+                                modifier = Modifier.size(16.dp),
                             )
                             Text(
-                                authState.error!!,
+                                "Unable to sign in. Please check your credentials and try again.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
+                                color = Color(0xFFDC2626),
                             )
                         }
                     }
                     Spacer(Modifier.height(16.dp))
                 }
 
-                // Email
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it; viewModel.clearError() },
-                    label = { Text("Email") },
-                    leadingIcon = { Icon(Icons.Filled.Email, contentDescription = null) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                    ),
+                // Email Address label + field
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                // Password
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it; viewModel.clearError() },
-                    label = { Text("Password") },
-                    leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(
-                                if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                contentDescription = "Toggle password",
-                            )
-                        }
-                    },
-                    singleLine = true,
-                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            focusManager.clearFocus()
-                            if (email.isNotBlank() && password.length >= 6) {
-                                viewModel.login(email.trim(), password)
-                            }
-                        }
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                // Submit
-                Button(
-                    onClick = { viewModel.login(email.trim(), password) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    enabled = email.isNotBlank() && password.length >= 6 && !authState.isLoading,
+                    horizontalAlignment = Alignment.Start,
                 ) {
-                    if (authState.isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Text("Sign In", fontWeight = FontWeight.SemiBold)
-                    }
+                    Text(
+                        "Email Address",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF374151),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it; viewModel.clearError() },
+                        placeholder = { Text("you@ecoroute.io", color = Color(0xFF9CA3AF)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Next,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF16A34A),
+                            unfocusedBorderColor = Color(0xFFD1D5DB),
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White,
+                        ),
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
 
+                // Password label + field
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.Start,
+                ) {
+                    Text(
+                        "Password",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF374151),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it; viewModel.clearError() },
+                        placeholder = { Text("Enter your password", color = Color(0xFF9CA3AF)) },
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                    contentDescription = "Toggle password",
+                                    tint = Color(0xFF9CA3AF),
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                focusManager.clearFocus()
+                                if (email.isNotBlank() && password.length >= 6) {
+                                    viewModel.login(email.trim(), password)
+                                }
+                            }
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF16A34A),
+                            unfocusedBorderColor = Color(0xFFD1D5DB),
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White,
+                        ),
+                    )
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                // Sign In button — green gradient style
+                Button(
+                    onClick = { viewModel.login(email.trim(), password) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = email.isNotBlank() && password.length >= 6 && !authState.isLoading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF16A34A),
+                        contentColor = Color.White,
+                        disabledContainerColor = Color(0xFF16A34A).copy(alpha = 0.5f),
+                        disabledContentColor = Color.White.copy(alpha = 0.7f),
+                    ),
+                ) {
+                    if (authState.isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.Login,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Sign In", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                // Footer
                 Text(
-                    "Subdivision waste management system",
+                    "Secure access to the EcoRoute admin dashboard.\nContact your administrator if you need an account.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    color = Color(0xFF9CA3AF),
                     textAlign = TextAlign.Center,
+                    lineHeight = 18.sp,
+                    fontSize = 11.sp,
                 )
             }
         }
