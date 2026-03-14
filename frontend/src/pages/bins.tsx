@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
 import { useAuth } from "@/hooks/use-auth";
@@ -85,6 +86,7 @@ function MapClickHandler({
 
 export function BinsPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<BinStatus | "all">("all");
@@ -314,7 +316,7 @@ export function BinsPage() {
                 const signal = signalLabel(t?.signalStrength ?? null);
 
                 return (
-                  <Card key={bin.id} className="overflow-hidden">
+                  <Card key={bin.id} className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/bins/${bin.id}`)}>
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between">
                         <CardTitle className="text-base">
