@@ -5,14 +5,17 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Install tsx for TypeScript execution (production dep for running .ts)
-RUN npm install tsx
+# Install tsx and drizzle-kit for TypeScript execution + DB management
+RUN npm install tsx drizzle-kit
 
 # Copy source
 COPY . .
 
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
 # Expose port
 EXPOSE 3000
 
-# Start the server via Node.js + tsx
-CMD ["node", "--import", "tsx/esm", "src/index.ts"]
+# Entrypoint handles db:push, seed, then starts the server
+CMD ["./entrypoint.sh"]
