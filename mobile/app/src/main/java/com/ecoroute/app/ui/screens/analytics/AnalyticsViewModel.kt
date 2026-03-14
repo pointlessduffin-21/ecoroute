@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class AnalyticsUiState(
+    val dashboardStats: com.ecoroute.app.data.model.DashboardStats? = null,
     val fillDistribution: FillLevelDistribution? = null,
     val collectionHistory: List<CollectionHistoryEntry> = emptyList(),
     val driverPerformance: List<DriverPerformanceEntry> = emptyList(),
@@ -38,12 +39,14 @@ class AnalyticsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
+            val statsResult = repository.getDashboardStats()
             val fillResult = repository.getFillLevels()
             val historyResult = repository.getCollectionHistory()
             val driverResult = repository.getDriverPerformance()
 
             _uiState.update {
                 it.copy(
+                    dashboardStats = statsResult.getOrNull(),
                     fillDistribution = fillResult.getOrNull(),
                     collectionHistory = historyResult.getOrDefault(emptyList()),
                     driverPerformance = driverResult.getOrDefault(emptyList()),

@@ -23,6 +23,7 @@ import androidx.navigation.navArgument
 import com.ecoroute.app.data.model.User
 import com.ecoroute.app.ui.screens.alerts.AlertsScreen
 import com.ecoroute.app.ui.screens.analytics.AnalyticsScreen
+import com.ecoroute.app.ui.screens.bins.BinDetailsScreen
 import com.ecoroute.app.ui.screens.bins.BinsScreen
 import com.ecoroute.app.ui.screens.dashboard.DashboardScreen
 import com.ecoroute.app.ui.screens.login.LoginScreen
@@ -73,8 +74,22 @@ fun EcoRouteNavHost() {
         }
         composable(Screen.Bins.route) {
             AppScaffold(navController, authState.user, Screen.Bins, loginViewModel) {
-                BinsScreen()
+                BinsScreen(
+                    onBinClick = { binId ->
+                        navController.navigate(Screen.BinDetails(binId).route)
+                    },
+                )
             }
+        }
+        composable(
+            route = Screen.BinDetails.ROUTE_PATTERN,
+            arguments = listOf(
+                navArgument("binId") { type = NavType.StringType },
+            ),
+        ) {
+            BinDetailsScreen(
+                onNavigateBack = { navController.popBackStack() },
+            )
         }
         composable(Screen.Routes.route) {
             AppScaffold(navController, authState.user, Screen.Routes, loginViewModel) {

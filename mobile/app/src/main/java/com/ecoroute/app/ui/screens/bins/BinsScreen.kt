@@ -23,7 +23,10 @@ import com.ecoroute.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BinsScreen(viewModel: BinsViewModel = hiltViewModel()) {
+fun BinsScreen(
+    onBinClick: (String) -> Unit = {},
+    viewModel: BinsViewModel = hiltViewModel(),
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
 
@@ -73,7 +76,7 @@ fun BinsScreen(viewModel: BinsViewModel = hiltViewModel()) {
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             items(bins, key = { it.id }) { bin ->
-                                BinCard(bin, state.telemetryMap[bin.id])
+                                BinCard(bin, state.telemetryMap[bin.id], onClick = { onBinClick(bin.id) })
                             }
                             item { Spacer(Modifier.height(72.dp)) }
                         }
@@ -108,11 +111,12 @@ fun BinsScreen(viewModel: BinsViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun BinCard(bin: SmartBin, telemetry: BinTelemetry?) {
+private fun BinCard(bin: SmartBin, telemetry: BinTelemetry?, onClick: () -> Unit = {}) {
     val (statusColor, statusBg) = statusColors(bin.status)
     val fillLevel = telemetry?.fillLevelPercent ?: 0.0
 
     Card(
+        onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {

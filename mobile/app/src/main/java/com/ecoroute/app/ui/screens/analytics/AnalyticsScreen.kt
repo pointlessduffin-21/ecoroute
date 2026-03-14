@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,6 +36,34 @@ private fun AnalyticsContent(state: AnalyticsUiState) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // Dashboard KPI Stats
+        val stats = state.dashboardStats
+        if (stats != null) {
+            item {
+                SectionHeader("Overview")
+            }
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    KpiCard(Modifier.weight(1f), "Total Bins", "${stats.totalBins}", Icons.Filled.Delete, Blue500)
+                    KpiCard(Modifier.weight(1f), "Active", "${stats.activeBins}", Icons.Filled.Wifi, Green600)
+                    KpiCard(Modifier.weight(1f), "Alerts (24h)", "${stats.overflowAlerts24h}", Icons.Filled.Warning, Red500)
+                }
+            }
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    KpiCard(Modifier.weight(1f), "Routes", "${stats.totalRoutes}", Icons.Filled.Route, MaterialTheme.colorScheme.primary)
+                    KpiCard(Modifier.weight(1f), "Today", "${stats.completedRoutesToday}", Icons.Filled.CheckCircle, Green600)
+                    KpiCard(Modifier.weight(1f), "Avg Fill", "%.0f%%".format(stats.avgFillLevel), Icons.Filled.WaterDrop, Yellow500)
+                }
+            }
+        }
+
         // Collection History Chart
         item {
             SectionHeader("Collection Performance (7 Days)")
@@ -153,6 +182,41 @@ private fun AnalyticsContent(state: AnalyticsUiState) {
         }
 
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun KpiCard(
+    modifier: Modifier = Modifier,
+    label: String,
+    value: String,
+    icon: ImageVector,
+    iconColor: androidx.compose.ui.graphics.Color,
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = iconColor,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

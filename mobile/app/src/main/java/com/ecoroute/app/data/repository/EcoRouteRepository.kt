@@ -92,6 +92,14 @@ class EcoRouteRepository @Inject constructor(
         }
     }
 
+    suspend fun getBin(id: String): Result<SmartBin> {
+        return try {
+            handleResponse(api.getBin(id))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun createBin(request: CreateBinRequest): Result<SmartBin> {
         return try {
             handleResponse(api.createBin(request))

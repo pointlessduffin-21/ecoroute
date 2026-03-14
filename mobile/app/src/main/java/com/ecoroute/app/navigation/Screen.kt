@@ -20,6 +20,16 @@ sealed class Screen(
     data object Provisioning : Screen("provisioning", "Device Setup", Icons.Filled.BluetoothSearching)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
+    data class BinDetails(val binId: String) : Screen(
+        route = "bin_details/$binId",
+        title = "Bin Details",
+        icon = Icons.Filled.Delete,
+    ) {
+        companion object {
+            const val ROUTE_PATTERN = "bin_details/{binId}"
+        }
+    }
+
     data class RouteExecution(val routeId: String) : Screen(
         route = "route_execution/$routeId",
         title = "Route Execution",
