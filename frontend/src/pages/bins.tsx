@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import { useAuth } from "@/hooks/use-auth";
 import api from "@/lib/api";
 import type { SmartBin, BinTelemetry, PaginatedResponse } from "@/types/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -83,6 +84,7 @@ function MapClickHandler({
 // ---------------------------------------------------------------------------
 
 export function BinsPage() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<BinStatus | "all">("all");
@@ -144,6 +146,7 @@ export function BinsPage() {
       latitude: number;
       longitude: number;
       capacityLiters: number;
+      subdivisionId: string;
     }) => {
       const res = await api.post("/bins", payload);
       return res.data;
@@ -173,16 +176,11 @@ export function BinsPage() {
       latitude: parseFloat(formLatitude),
       longitude: parseFloat(formLongitude),
       capacityLiters: parseInt(formCapacity, 10),
+      subdivisionId: user?.subdivisionId ?? "",
     });
   }
 
-  // Auto-fill topic when device code changes
-  const handleDeviceCodeChange = useCallback((code: string) => {
-    setFormDeviceCode(code);
-    if (code) {
-      setFormMqttTopic(`ecoroute/trash_can/${code}`);
-    }
-  }, []);
+  // No auto-bind — device code and topic are independent
 
   // Map location select
   const handleLocationSelect = useCallback((lat: number, lng: number) => {
@@ -420,7 +418,7 @@ export function BinsPage() {
                 <Input
                   placeholder="ECO-BIN-001"
                   value={formDeviceCode}
-                  onChange={(e) => handleDeviceCodeChange(e.target.value)}
+                  onChange={(e) => setFormDeviceCode(e.target.value)}
                   required
                 />
               </div>
