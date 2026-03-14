@@ -67,6 +67,32 @@ app.post("/", async (c) => {
   return c.json({ data: created }, 201);
 });
 
+// ─── GET / — List telemetry records (paginated) ─────────────────────────────
+
+app.get("/", async (c) => {
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 500);
+  const offset = Number(c.req.query("offset") || "0");
+
+  const db = getDb();
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(binTelemetry)
+      .orderBy(desc(binTelemetry.recordedAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(binTelemetry),
+  ]);
+
+  return c.json({
+    data: items,
+    pagination: { total: countResult[0]!.count, limit, offset },
+  });
+});
+
 // ─── GET /latest — Get latest telemetry for all bins in a subdivision ───────
 
 app.get("/latest", async (c) => {
