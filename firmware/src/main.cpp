@@ -1,209 +1,165 @@
-#include <Arduino.h>
-#include "config.h"
-#include "config_manager.h"
-#include "sensor_reader.h"
-#include "wifi_manager.h"
-#include "mqtt_client.h"
-#include "ble_provisioning.h"
+/*
+ * EcoRoute Smart Bin — MQTT Simulator
+ *
+ * Publishes simulated telemetry to MQTT broker.
+ * No sensors, no BLE — just WiFi + MQTT with fake data.
+ *
+ * Hardware: ESP32 (any dev board)
+ *
+ * MQTT Broker: 109.123.238.215:1883
+ * Topic:       ecoroute/trash_can/<DEVICE_CODE>
+ */
 
-// ─── Global objects ─────────────────────────────────────────────────────────
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 
-ConfigManager configManager;
-SensorReader sensors;
-WifiManager wifi;
-EcoRouteMqttClient mqttClient;
-BleProvisioning ble;
+// ─── CONFIGURE THESE ────────────────────────────────────────────────────────
+#define WIFI_SSID           "Duffin's Tecno"
+#define WIFI_PASSWORD       "yeems214"
 
-// ─── Deep sleep helper ──────────────────────────────────────────────────────
+#define DEVICE_CODE         "ECO-BIN-001"
+#define BIN_HEIGHT_CM       100.0f
 
-void enterDeepSleep(uint32_t seconds) {
-  Serial.printf("[main] Entering deep sleep for %u seconds...\n", seconds);
-  Serial.flush();
+#define MQTT_BROKER         "109.123.238.215"
+#define MQTT_PORT           1883
+#define MQTT_TOPIC_PREFIX   "ecoroute/trash_can/"
 
-  // Hold TRIG pin LOW during sleep
-  gpio_hold_en(HCSR04_TRIG_PIN);
-  gpio_deep_sleep_hold_en();
+#define REPORT_INTERVAL_SEC 30        // how often to publish (seconds)
+// ─────────────────────────────────────────────────────────────────────────────
 
-  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
-  esp_deep_sleep_start();
-}
+#define FIRMWARE_VERSION    "1.0.0-sim"
+#define LED_PIN             2
 
-// ─── BLE Provisioning Mode ──────────────────────────────────────────────────
+WiFiClient   wifiClient;
+PubSubClient mqtt(wifiClient);
 
-void runProvisioningMode() {
-  Serial.println("[main] === PROVISIONING MODE ===");
-  Serial.println("[main] Waiting for mobile app to configure via BLE...");
+float simulatedFillPercent = 0.0f;
+bool  fillRising = true;
 
-  // Use a name based on the chip's MAC address if no device code set
-  String deviceName;
-  String storedCode = configManager.getDeviceCode();
-  if (storedCode.length() > 0) {
-    deviceName = storedCode;
+// ─── WiFi ────────────────────────────────────────────────────────────────────
+
+void connectWifi() {
+  Serial.printf("[wifi] Connecting to '%s'...\n", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[wifi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    uint64_t mac = ESP.getEfuseMac();
-    char macStr[5];
-    snprintf(macStr, sizeof(macStr), "%04X", (uint16_t)(mac >> 32));
-    deviceName = String(BLE_DEVICE_NAME_PREFIX) + macStr;
-  }
-
-  // Read battery for status updates
-  sensors.begin();
-  float battery = sensors.readBatteryVoltage();
-
-  // Start BLE GATT server
-  ble.begin(&configManager, deviceName.c_str());
-  ble.updateStatus(battery, false);
-
-  // Blink LED to indicate provisioning mode
-  pinMode(LED_PIN, OUTPUT);
-
-  uint32_t bleStartMs = millis();
-  uint32_t lastBlinkMs = 0;
-  bool ledState = false;
-
-  while (true) {
-    // Check for commands
-    if (ble.hasSaveCommand()) {
-      Serial.println("[main] Save command received!");
-      ble.clearCommands();
-
-      // Validate we have minimum config
-      String ssid = configManager.getWifiSsid();
-      String code = configManager.getDeviceCode();
-      String url = configManager.getApiUrl();
-
-      if (ssid.length() > 0 && code.length() > 0 && url.length() > 0) {
-        configManager.markConfigured();
-        Serial.println("[main] Configuration saved. Restarting...");
-        delay(500);
-        ESP.restart();
-      } else {
-        Serial.println("[main] Incomplete config - need WiFi SSID, device code, and API URL");
-      }
-    }
-
-    if (ble.hasFactoryResetCommand()) {
-      Serial.println("[main] Factory reset command received!");
-      ble.clearCommands();
-      configManager.factoryReset();
-      Serial.println("[main] Factory reset complete. Restarting...");
-      delay(500);
-      ESP.restart();
-    }
-
-    if (ble.hasForceReportCommand()) {
-      Serial.println("[main] Force report command - ignored in provisioning mode");
-      ble.clearCommands();
-    }
-
-    // Blink LED every 500ms in provisioning mode
-    if (millis() - lastBlinkMs > 500) {
-      ledState = !ledState;
-      digitalWrite(LED_PIN, ledState);
-      lastBlinkMs = millis();
-    }
-
-    // Update status periodically (every 5 seconds)
-    static uint32_t lastStatusUpdate = 0;
-    if (millis() - lastStatusUpdate > 5000) {
-      battery = sensors.readBatteryVoltage();
-      ble.updateStatus(battery, false);
-      lastStatusUpdate = millis();
-    }
-
-    // Timeout: go to deep sleep after BLE_ADVERTISING_TIMEOUT_SEC
-    if (millis() - bleStartMs > (uint32_t)BLE_ADVERTISING_TIMEOUT_SEC * 1000) {
-      Serial.println("[main] BLE advertising timeout. Sleeping for 60s, then retry...");
-      ble.stop();
-      enterDeepSleep(60);  // Wake up in 1 min and try BLE again
-    }
-
-    delay(100);
+    Serial.println("\n[wifi] FAILED — check SSID/password. Restarting in 10s...");
+    delay(10000);
+    ESP.restart();
   }
 }
 
-// ─── Telemetry Reporting Mode ───────────────────────────────────────────────
+// ─── MQTT ────────────────────────────────────────────────────────────────────
 
-void runReportingMode() {
-  Serial.println("[main] === REPORTING MODE ===");
+void connectMqtt() {
+  String clientId = String("ecoroute-") + DEVICE_CODE;
 
-  String ssid = configManager.getWifiSsid();
-  String pass = configManager.getWifiPassword();
-  String deviceCode = configManager.getDeviceCode();
-  float binHeight = configManager.getBinHeight();
-  uint32_t interval = configManager.getReportInterval();
-
-  Serial.printf("[main] Device: %s | Bin: %.0f cm | Interval: %us\n",
-    deviceCode.c_str(), binHeight, interval);
-  Serial.printf("[main] MQTT: %s:%d\n", MQTT_BROKER_HOST, MQTT_BROKER_PORT);
-
-  // Turn on LED solid during reporting
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);
-
-  // Step 1: Connect to WiFi
-  if (!wifi.connect(ssid.c_str(), pass.c_str())) {
-    Serial.println("[main] WiFi failed. Sleeping and retrying...");
-    enterDeepSleep(60);  // Retry in 1 minute
-    return;
+  while (!mqtt.connected()) {
+    Serial.printf("[mqtt] Connecting to %s:%d...\n", MQTT_BROKER, MQTT_PORT);
+    if (mqtt.connect(clientId.c_str())) {
+      Serial.println("[mqtt] Connected!");
+    } else {
+      Serial.printf("[mqtt] Failed (rc=%d). Retrying in 5s...\n", mqtt.state());
+      delay(5000);
+    }
   }
+}
 
-  // Step 2: Read sensors
-  sensors.begin();
-  SensorReading reading = sensors.readAll(binHeight);
+// ─── Simulated Telemetry ─────────────────────────────────────────────────────
 
-  // Step 3: Publish telemetry via MQTT
-  // Topic: ecoroute/trash_can/<device_code>
-  MqttPublishResult result = mqttClient.publishTelemetry(
-    deviceCode.c_str(),
-    reading
-  );
-
-  if (result.success) {
-    Serial.println("[main] Telemetry published!");
+void publishTelemetry() {
+  // Simulate fill level slowly rising then dropping (like a real bin cycle)
+  if (fillRising) {
+    simulatedFillPercent += 2.0f + (float)(esp_random() % 30) / 10.0f; // +2.0–5.0%
+    if (simulatedFillPercent >= 95.0f) {
+      fillRising = false; // bin gets emptied
+    }
   } else {
-    Serial.printf("[main] Telemetry failed: %s\n", result.error.c_str());
+    simulatedFillPercent = 5.0f + (float)(esp_random() % 100) / 10.0f; // reset to 5–15%
+    fillRising = true;
   }
+  simulatedFillPercent = constrain(simulatedFillPercent, 0.0f, 100.0f);
 
-  // Step 4: Disconnect WiFi and sleep
-  wifi.disconnect();
-  digitalWrite(LED_PIN, LOW);
+  float distanceCm = BIN_HEIGHT_CM * (1.0f - simulatedFillPercent / 100.0f);
+  float batteryVoltage = 3.6f + (float)(esp_random() % 60) / 100.0f; // 3.6–4.2V
+  int32_t rssi = WiFi.RSSI();
 
-  enterDeepSleep(interval);
+  // Build JSON
+  JsonDocument doc;
+  doc["device_code"]        = DEVICE_CODE;
+  doc["fill_level_percent"] = round(simulatedFillPercent * 10.0f) / 10.0f;
+  doc["distance_cm"]        = round(distanceCm * 10.0f) / 10.0f;
+  doc["battery_voltage"]    = round(batteryVoltage * 100.0f) / 100.0f;
+  doc["signal_strength"]    = rssi;
+  doc["anomaly_flag"]       = false;
+  doc["firmware_version"]   = FIRMWARE_VERSION;
+
+  char payload[256];
+  size_t len = serializeJson(doc, payload, sizeof(payload));
+
+  // Publish
+  String topic = String(MQTT_TOPIC_PREFIX) + DEVICE_CODE;
+  bool ok = mqtt.publish(topic.c_str(), payload, len);
+
+  Serial.printf("[mqtt] %s → %s\n", topic.c_str(), payload);
+  Serial.printf("[mqtt] %s\n", ok ? "OK" : "PUBLISH FAILED");
 }
 
-// ─── Arduino Entry Points ───────────────────────────────────────────────────
+// ─── Arduino Entry Points ────────────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
   delay(100);
 
   Serial.println();
-  Serial.println("╔══════════════════════════════════════╗");
-  Serial.println("║   EcoRoute Smart Bin Firmware v" FIRMWARE_VERSION "  ║");
-  Serial.println("╚══════════════════════════════════════╝");
+  Serial.println("========================================");
+  Serial.println("  EcoRoute MQTT Simulator v" FIRMWARE_VERSION);
+  Serial.println("  Device: " DEVICE_CODE);
+  Serial.println("  Broker: " MQTT_BROKER);
+  Serial.printf( "  Interval: %ds\n", REPORT_INTERVAL_SEC);
+  Serial.println("========================================");
   Serial.println();
 
-  // Check wake reason
-  esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
-  if (wakeup == ESP_SLEEP_WAKEUP_TIMER) {
-    Serial.println("[main] Woke up from deep sleep (timer)");
-  } else {
-    Serial.println("[main] Fresh boot / reset");
-  }
+  pinMode(LED_PIN, OUTPUT);
 
-  // Load configuration from NVS
-  configManager.begin();
+  connectWifi();
 
-  if (configManager.isConfigured()) {
-    runReportingMode();
-  } else {
-    runProvisioningMode();
-  }
+  mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+  connectMqtt();
+
+  // Publish first reading immediately
+  publishTelemetry();
 }
 
 void loop() {
-  // loop() is only reached in provisioning mode (runProvisioningMode has its own loop)
-  // If we somehow get here, just sleep
-  delay(1000);
+  // Reconnect if needed
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWifi();
+  }
+  if (!mqtt.connected()) {
+    connectMqtt();
+  }
+  mqtt.loop();
+
+  // Publish on interval
+  static unsigned long lastPublish = 0;
+  if (millis() - lastPublish >= (unsigned long)REPORT_INTERVAL_SEC * 1000UL) {
+    digitalWrite(LED_PIN, HIGH);
+    publishTelemetry();
+    digitalWrite(LED_PIN, LOW);
+    lastPublish = millis();
+  }
+
+  delay(100);
 }
