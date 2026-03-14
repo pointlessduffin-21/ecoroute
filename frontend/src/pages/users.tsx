@@ -419,7 +419,6 @@ export function UsersPage() {
                     >
                       <option value="admin">Admin</option>
                       <option value="dispatcher">Dispatcher</option>
-                      <option value="driver">Driver</option>
                     </select>
                   </div>
                   <div className="space-y-2">
@@ -493,7 +492,6 @@ export function UsersPage() {
                     >
                       <option value="admin">Admin</option>
                       <option value="dispatcher">Dispatcher</option>
-                      <option value="driver">Driver</option>
                     </select>
                   </div>
                   <div className="space-y-2">
