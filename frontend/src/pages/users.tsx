@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   Radio,
   Truck,
+  Pencil,
 } from "lucide-react";
 
 const ROLE_OPTIONS = ["all", "admin", "dispatcher", "driver"] as const;
@@ -57,16 +58,41 @@ const roleIcon = (role: User["role"]) => {
   }
 };
 
+type ModalMode = "add" | "edit" | null;
+
+interface EditFormData {
+  fullName: string;
+  email: string;
+  role: User["role"];
+  phone: string;
+  isActive: boolean;
+}
+
+interface AddFormData {
+  fullName: string;
+  email: string;
+  role: User["role"];
+  password: string;
+}
+
 export function UsersPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
-  const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [addForm, setAddForm] = useState<AddFormData>({
     fullName: "",
     email: "",
-    role: "driver" as User["role"],
+    role: "driver",
     password: "",
+  });
+  const [editForm, setEditForm] = useState<EditFormData>({
+    fullName: "",
+    email: "",
+    role: "driver",
+    phone: "",
+    isActive: true,
   });
 
   const { data: usersResponse, isLoading } = useQuery<PaginatedResponse<User>>(
@@ -80,14 +106,24 @@ export function UsersPage() {
   );
 
   const createUserMutation = useMutation({
-    mutationFn: async (data: typeof formData) => {
+    mutationFn: async (data: AddFormData) => {
       const res = await api.post("/users", data);
       return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      setShowModal(false);
-      setFormData({ fullName: "", email: "", role: "driver", password: "" });
+      closeModal();
+    },
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<EditFormData> }) => {
+      const res = await api.put(`/users/${id}`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      closeModal();
     },
   });
 
@@ -102,9 +138,46 @@ export function UsersPage() {
     return matchesSearch && matchesRole;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const closeModal = () => {
+    setModalMode(null);
+    setEditingUserId(null);
+    setAddForm({ fullName: "", email: "", role: "driver", password: "" });
+    setEditForm({ fullName: "", email: "", role: "driver", phone: "", isActive: true });
+  };
+
+  const openAddModal = () => {
+    setModalMode("add");
+  };
+
+  const openEditModal = (user: User) => {
+    setEditingUserId(user.id);
+    setEditForm({
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+      phone: user.phone ?? "",
+      isActive: user.isActive,
+    });
+    setModalMode("edit");
+  };
+
+  const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createUserMutation.mutate(formData);
+    createUserMutation.mutate(addForm);
+  };
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUserId) return;
+    updateUserMutation.mutate({
+      id: editingUserId,
+      data: {
+        fullName: editForm.fullName,
+        role: editForm.role,
+        phone: editForm.phone || undefined,
+        isActive: editForm.isActive,
+      },
+    });
   };
 
   return (
@@ -119,7 +192,7 @@ export function UsersPage() {
             Manage system users, roles, and permissions.
           </p>
         </div>
-        <Button onClick={() => setShowModal(true)}>
+        <Button onClick={openAddModal}>
           <Plus className="mr-2 h-4 w-4" />
           Add User
         </Button>
@@ -220,12 +293,13 @@ export function UsersPage() {
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
+                  <TableHead className="w-15" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8">
+                    <TableCell colSpan={6} className="text-center py-8">
                       <p className="text-muted-foreground">No users found.</p>
                     </TableCell>
                   </TableRow>
@@ -261,6 +335,15 @@ export function UsersPage() {
                       <TableCell className="text-muted-foreground">
                         {formatDateTime(user.createdAt)}
                       </TableCell>
+                      <TableCell>
+                        <button
+                          onClick={() => openEditModal(user)}
+                          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                          title="Edit user"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -270,106 +353,207 @@ export function UsersPage() {
         </CardContent>
       </Card>
 
-      {/* Add User Modal */}
-      {showModal && (
+      {/* Add / Edit User Modal */}
+      {modalMode && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/50"
-            onClick={() => setShowModal(false)}
+            onClick={closeModal}
           />
           <Card className="relative z-10 w-full max-w-md mx-4">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Add New User</CardTitle>
+                <CardTitle>
+                  {modalMode === "add" ? "Add New User" : "Edit User"}
+                </CardTitle>
                 <button
-                  onClick={() => setShowModal(false)}
+                  onClick={closeModal}
                   className="rounded-md p-1 hover:bg-muted"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
               <CardDescription>
-                Fill in the details to create a new user account.
+                {modalMode === "add"
+                  ? "Fill in the details to create a new user account."
+                  : "Update the user's information."}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Full Name</label>
-                  <Input
-                    placeholder="John Doe"
-                    value={formData.fullName}
-                    onChange={(e) =>
-                      setFormData({ ...formData, fullName: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Email</label>
-                  <Input
-                    type="email"
-                    placeholder="john@ecoroute.io"
-                    value={formData.email}
-                    onChange={(e) =>
-                      setFormData({ ...formData, email: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Role</label>
-                  <select
-                    value={formData.role}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        role: e.target.value as User["role"],
-                      })
-                    }
-                    className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <option value="admin">Admin</option>
-                    <option value="dispatcher">Dispatcher</option>
-                    <option value="driver">Driver</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Password</label>
-                  <Input
-                    type="password"
-                    placeholder="Minimum 8 characters"
-                    value={formData.password}
-                    onChange={(e) =>
-                      setFormData({ ...formData, password: e.target.value })
-                    }
-                    required
-                    minLength={8}
-                  />
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowModal(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={createUserMutation.isPending}
-                  >
-                    {createUserMutation.isPending
-                      ? "Creating..."
-                      : "Create User"}
-                  </Button>
-                </div>
-                {createUserMutation.isError && (
-                  <p className="text-sm text-destructive">
-                    Failed to create user. Please try again.
-                  </p>
-                )}
-              </form>
+              {modalMode === "add" ? (
+                <form onSubmit={handleAddSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Full Name</label>
+                    <Input
+                      placeholder="John Doe"
+                      value={addForm.fullName}
+                      onChange={(e) =>
+                        setAddForm({ ...addForm, fullName: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Email</label>
+                    <Input
+                      type="email"
+                      placeholder="john@ecoroute.io"
+                      value={addForm.email}
+                      onChange={(e) =>
+                        setAddForm({ ...addForm, email: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Role</label>
+                    <select
+                      value={addForm.role}
+                      onChange={(e) =>
+                        setAddForm({
+                          ...addForm,
+                          role: e.target.value as User["role"],
+                        })
+                      }
+                      className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      <option value="admin">Admin</option>
+                      <option value="dispatcher">Dispatcher</option>
+                      <option value="driver">Driver</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Password</label>
+                    <Input
+                      type="password"
+                      placeholder="Minimum 8 characters"
+                      value={addForm.password}
+                      onChange={(e) =>
+                        setAddForm({ ...addForm, password: e.target.value })
+                      }
+                      required
+                      minLength={8}
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={closeModal}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={createUserMutation.isPending}
+                    >
+                      {createUserMutation.isPending
+                        ? "Creating..."
+                        : "Create User"}
+                    </Button>
+                  </div>
+                  {createUserMutation.isError && (
+                    <p className="text-sm text-destructive">
+                      Failed to create user. Please try again.
+                    </p>
+                  )}
+                </form>
+              ) : (
+                <form onSubmit={handleEditSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Full Name</label>
+                    <Input
+                      value={editForm.fullName}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, fullName: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Email</label>
+                    <Input
+                      type="email"
+                      value={editForm.email}
+                      disabled
+                      className="opacity-60"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Role</label>
+                    <select
+                      value={editForm.role}
+                      onChange={(e) =>
+                        setEditForm({
+                          ...editForm,
+                          role: e.target.value as User["role"],
+                        })
+                      }
+                      className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      <option value="admin">Admin</option>
+                      <option value="dispatcher">Dispatcher</option>
+                      <option value="driver">Driver</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Phone</label>
+                    <Input
+                      type="tel"
+                      placeholder="+63-917-000-0000"
+                      value={editForm.phone}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, phone: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-sm font-medium">Active</label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditForm({ ...editForm, isActive: !editForm.isActive })
+                      }
+                      className={cn(
+                        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors",
+                        editForm.isActive ? "bg-primary" : "bg-muted"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+                          editForm.isActive ? "translate-x-5" : "translate-x-0"
+                        )}
+                      />
+                    </button>
+                    <span className="text-sm text-muted-foreground">
+                      {editForm.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={closeModal}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={updateUserMutation.isPending}
+                    >
+                      {updateUserMutation.isPending
+                        ? "Saving..."
+                        : "Save Changes"}
+                    </Button>
+                  </div>
+                  {updateUserMutation.isError && (
+                    <p className="text-sm text-destructive">
+                      Failed to update user. Please try again.
+                    </p>
+                  )}
+                </form>
+              )}
             </CardContent>
           </Card>
         </div>

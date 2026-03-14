@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import { useAuth } from "@/hooks/use-auth";
 import api from "@/lib/api";
 import type { SmartBin, BinTelemetry, PaginatedResponse } from "@/types/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +18,13 @@ import {
   Battery,
   Wifi,
   RefreshCw,
+  X,
+  Zap,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
+import "leaflet/dist/leaflet.css";
 
 // ---------------------------------------------------------------------------
 // Helpers & constants
@@ -47,10 +56,6 @@ function fillBarColor(percent: number): string {
   return "bg-green-500";
 }
 
-// ---------------------------------------------------------------------------
-// Signal-strength helper
-// ---------------------------------------------------------------------------
-
 function signalLabel(rssi: number | null): { text: string; color: string } {
   if (rssi === null) return { text: "N/A", color: "text-muted-foreground" };
   if (rssi >= -70) return { text: "Good", color: "text-green-600" };
@@ -59,20 +64,49 @@ function signalLabel(rssi: number | null): { text: string; color: string } {
 }
 
 // ---------------------------------------------------------------------------
+// Map click handler component
+// ---------------------------------------------------------------------------
+
+function MapClickHandler({
+  onLocationSelect,
+}: {
+  onLocationSelect: (lat: number, lng: number) => void;
+}) {
+  useMapEvents({
+    click(e) {
+      onLocationSelect(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export function BinsPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<BinStatus | "all">("all");
   const [modalOpen, setModalOpen] = useState(false);
 
-  // Form state for Add Bin modal
+  // Form state
   const [formDeviceCode, setFormDeviceCode] = useState("");
   const [formLatitude, setFormLatitude] = useState("");
   const [formLongitude, setFormLongitude] = useState("");
   const [formCapacity, setFormCapacity] = useState("");
+  const [formMqttBroker, setFormMqttBroker] = useState("109.123.238.215");
+  const [formMqttPort, setFormMqttPort] = useState("1883");
+  const [formMqttTopic, setFormMqttTopic] = useState("ecoroute/trash_can/");
+
+  // MQTT test state
+  const [mqttTestResult, setMqttTestResult] = useState<{
+    status: "idle" | "loading" | "success" | "error";
+    data?: unknown;
+    message?: string;
+  }>({ status: "idle" });
 
   // ---- Queries ----
 
@@ -90,7 +124,6 @@ export function BinsPage() {
 
   const bins: SmartBin[] = binsResponse?.data ?? [];
 
-  // Telemetry keyed by bin id -- fetch latest for each bin
   const { data: telemetryMap } = useQuery({
     queryKey: ["bins-telemetry"],
     queryFn: async () => {
@@ -115,6 +148,7 @@ export function BinsPage() {
       latitude: number;
       longitude: number;
       capacityLiters: number;
+      subdivisionId: string;
     }) => {
       const res = await api.post("/bins", payload);
       return res.data;
@@ -131,6 +165,10 @@ export function BinsPage() {
     setFormLatitude("");
     setFormLongitude("");
     setFormCapacity("");
+    setFormMqttBroker("109.123.238.215");
+    setFormMqttPort("1883");
+    setFormMqttTopic("ecoroute/trash_can/");
+    setMqttTestResult({ status: "idle" });
   }
 
   function handleAddBin(e: React.FormEvent) {
@@ -140,7 +178,54 @@ export function BinsPage() {
       latitude: parseFloat(formLatitude),
       longitude: parseFloat(formLongitude),
       capacityLiters: parseInt(formCapacity, 10),
+      subdivisionId: user?.subdivisionId ?? "",
     });
+  }
+
+  // No auto-bind — device code and topic are independent
+
+  // Map location select
+  const handleLocationSelect = useCallback((lat: number, lng: number) => {
+    setFormLatitude(lat.toFixed(6));
+    setFormLongitude(lng.toFixed(6));
+  }, []);
+
+  // MQTT test
+  async function handleMqttTest() {
+    setMqttTestResult({ status: "loading" });
+    // If topic ends with / or is a prefix, append + wildcard to catch sub-topics
+    let testTopic = formMqttTopic;
+    if (testTopic.endsWith("/")) testTopic += "+";
+    try {
+      const res = await api.post("/bins/mqtt-test", {
+        broker: formMqttBroker,
+        port: parseInt(formMqttPort, 10),
+        topic: testTopic,
+      });
+      const data = res.data;
+      if (data.success && data.message) {
+        setMqttTestResult({
+          status: "success",
+          data: data.message,
+          message: `Received from ${data.topic}`,
+        });
+      } else if (data.success && !data.message) {
+        setMqttTestResult({
+          status: "success",
+          message: data.info || "Connected but no message received.",
+        });
+      } else {
+        setMqttTestResult({
+          status: "error",
+          message: data.error || "Test failed",
+        });
+      }
+    } catch {
+      setMqttTestResult({
+        status: "error",
+        message: "Failed to connect to MQTT broker.",
+      });
+    }
   }
 
   // ---- Filtering ----
@@ -153,6 +238,10 @@ export function BinsPage() {
       statusFilter === "all" || bin.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  // Map center for the picker
+  const mapLat = formLatitude ? parseFloat(formLatitude) : 14.5547;
+  const mapLng = formLongitude ? parseFloat(formLongitude) : 121.0244;
 
   // ---- Render ----
 
@@ -227,7 +316,7 @@ export function BinsPage() {
                 const signal = signalLabel(t?.signalStrength ?? null);
 
                 return (
-                  <Card key={bin.id} className="overflow-hidden">
+                  <Card key={bin.id} className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/bins/${bin.id}`)}>
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between">
                         <CardTitle className="text-base">
@@ -305,80 +394,184 @@ export function BinsPage() {
 
       {/* -------- Add Bin Modal -------- */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto py-8">
           <div
             className="absolute inset-0 bg-black/60"
-            onClick={() => setModalOpen(false)}
+            onClick={() => { setModalOpen(false); resetForm(); }}
           />
 
-          {/* Dialog */}
-          <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-lg">
-            <h2 className="mb-4 text-lg font-semibold">Add New Bin</h2>
+          <div className="relative z-10 w-full max-w-lg mx-4 rounded-lg border border-border bg-card p-6 shadow-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Add New Bin</h2>
+              <button
+                onClick={() => { setModalOpen(false); resetForm(); }}
+                className="rounded-md p-1 hover:bg-muted"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-            <form onSubmit={handleAddBin} className="space-y-4">
+            <form onSubmit={handleAddBin} className="space-y-5">
+              {/* Device Code */}
               <div>
-                <label
-                  htmlFor="add-device-code"
-                  className="mb-1 block text-sm font-medium"
-                >
+                <label className="mb-1 block text-sm font-medium">
                   Device Code
                 </label>
                 <Input
-                  id="add-device-code"
-                  placeholder="ECO-BIN-XXXX"
+                  placeholder="ECO-BIN-001"
                   value={formDeviceCode}
                   onChange={(e) => setFormDeviceCode(e.target.value)}
                   required
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="add-latitude"
-                    className="mb-1 block text-sm font-medium"
-                  >
-                    Latitude
-                  </label>
-                  <Input
-                    id="add-latitude"
-                    type="number"
-                    step="any"
-                    placeholder="14.5547"
-                    value={formLatitude}
-                    onChange={(e) => setFormLatitude(e.target.value)}
-                    required
-                  />
+              {/* MQTT Configuration */}
+              <div className="rounded-md border border-border p-4 space-y-3">
+                <p className="text-sm font-medium">MQTT Configuration</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      Broker Address
+                    </label>
+                    <Input
+                      placeholder="109.123.238.215"
+                      value={formMqttBroker}
+                      onChange={(e) => setFormMqttBroker(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      Port
+                    </label>
+                    <Input
+                      type="number"
+                      placeholder="1883"
+                      value={formMqttPort}
+                      onChange={(e) => setFormMqttPort(e.target.value)}
+                    />
+                  </div>
                 </div>
                 <div>
-                  <label
-                    htmlFor="add-longitude"
-                    className="mb-1 block text-sm font-medium"
-                  >
-                    Longitude
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Topic
                   </label>
                   <Input
-                    id="add-longitude"
-                    type="number"
-                    step="any"
-                    placeholder="121.0244"
-                    value={formLongitude}
-                    onChange={(e) => setFormLongitude(e.target.value)}
-                    required
+                    placeholder="ecoroute/trash_can/ECO-BIN-001"
+                    value={formMqttTopic}
+                    onChange={(e) => setFormMqttTopic(e.target.value)}
                   />
+                </div>
+
+                {/* Test MQTT Button */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleMqttTest}
+                  disabled={mqttTestResult.status === "loading" || !formMqttBroker || !formMqttTopic}
+                  className="w-full"
+                >
+                  {mqttTestResult.status === "loading" ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Listening for message...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-3.5 w-3.5" />
+                      Test MQTT Connection
+                    </>
+                  )}
+                </Button>
+
+                {/* Test result */}
+                {mqttTestResult.status === "success" && (
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 space-y-1">
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-green-700">
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      {mqttTestResult.message}
+                    </div>
+                    {mqttTestResult.data != null && (
+                      <pre className="mt-1 text-xs text-green-800 bg-green-100 rounded p-2 overflow-x-auto max-h-32">
+                        {JSON.stringify(mqttTestResult.data as object, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+                {mqttTestResult.status === "error" && (
+                  <div className="flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    {mqttTestResult.message}
+                  </div>
+                )}
+              </div>
+
+              {/* Location — Map Picker */}
+              <div>
+                <label className="mb-1 block text-sm font-medium">
+                  Location
+                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+                    (click the map to place the bin)
+                  </span>
+                </label>
+                <div className="h-48 rounded-md overflow-hidden border border-border">
+                  <MapContainer
+                    center={[mapLat, mapLng]}
+                    zoom={15}
+                    style={{ height: "100%", width: "100%" }}
+                    scrollWheelZoom={true}
+                  >
+                    <TileLayer
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                    />
+                    <MapClickHandler onLocationSelect={handleLocationSelect} />
+                    {formLatitude && formLongitude && (
+                      <Marker
+                        position={[
+                          parseFloat(formLatitude),
+                          parseFloat(formLongitude),
+                        ]}
+                      />
+                    )}
+                  </MapContainer>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      Latitude
+                    </label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="14.5547"
+                      value={formLatitude}
+                      onChange={(e) => setFormLatitude(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      Longitude
+                    </label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="121.0244"
+                      value={formLongitude}
+                      onChange={(e) => setFormLongitude(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Capacity */}
               <div>
-                <label
-                  htmlFor="add-capacity"
-                  className="mb-1 block text-sm font-medium"
-                >
+                <label className="mb-1 block text-sm font-medium">
                   Capacity (liters)
                 </label>
                 <Input
-                  id="add-capacity"
                   type="number"
                   min={1}
                   placeholder="240"
@@ -398,10 +591,7 @@ export function BinsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => {
-                    setModalOpen(false);
-                    resetForm();
-                  }}
+                  onClick={() => { setModalOpen(false); resetForm(); }}
                 >
                   Cancel
                 </Button>

@@ -4,6 +4,7 @@ import { AppLayout } from "@/components/layout/app-layout";
 import { LoginPage } from "@/pages/login";
 import { DashboardPage } from "@/pages/dashboard";
 import { BinsPage } from "@/pages/bins";
+import { BinDetailsPage } from "@/pages/bin-details";
 import { RoutesPage } from "@/pages/routes";
 import { AlertsPage } from "@/pages/alerts";
 import { UsersPage } from "@/pages/users";
@@ -56,6 +57,7 @@ export function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="bins" element={<BinsPage />} />
+        <Route path="bins/:id" element={<BinDetailsPage />} />
         <Route path="routes" element={<RoutesPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="users" element={<UsersPage />} />

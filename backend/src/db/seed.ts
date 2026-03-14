@@ -14,6 +14,7 @@ import {
   fillPredictions,
   auditLogs,
 } from "./schema";
+import { hashPassword } from "../utils/password";
 
 function must<T>(val: T | undefined, label = "value"): T {
   if (val === undefined) throw new Error(`Seed error: ${label} is undefined`);
@@ -112,57 +113,31 @@ async function seed() {
 
   // ── 2. Users ────────────────────────────────────────────────────────────────
   console.log("2. Inserting users...");
+  const defaultPwHash = await hashPassword("password123");
   const insertedUsers = await db
     .insert(users)
     .values([
       {
         email: "admin@ecoroute.io",
-        fullName: "Sarah Johnson",
+        fullName: "Admin",
         role: "admin" as const,
-        phone: "+63-917-111-0001",
         isActive: true,
         subdivisionId: gfe.id,
+        passwordHash: defaultPwHash,
       },
       {
-        email: "mike.dispatcher@ecoroute.io",
-        fullName: "Mike Chen",
+        email: "dispatcher@ecoroute.io",
+        fullName: "Dispatcher",
         role: "dispatcher" as const,
-        phone: "+63-917-222-0002",
         isActive: true,
         subdivisionId: gfe.id,
-      },
-      {
-        email: "juan.driver@ecoroute.io",
-        fullName: "Juan dela Cruz",
-        role: "driver" as const,
-        phone: "+63-917-333-0003",
-        isActive: true,
-        subdivisionId: gfe.id,
-      },
-      {
-        email: "maria.driver@ecoroute.io",
-        fullName: "Maria Santos",
-        role: "driver" as const,
-        phone: "+63-917-444-0004",
-        isActive: true,
-        subdivisionId: mph.id,
-      },
-      {
-        email: "jane.dispatcher@ecoroute.io",
-        fullName: "Jane Cooper",
-        role: "dispatcher" as const,
-        phone: "+63-917-555-0005",
-        isActive: false,
-        subdivisionId: mph.id,
+        passwordHash: defaultPwHash,
       },
     ])
     .returning();
 
   const adminUser = must(insertedUsers[0], "adminUser");
-  const dispatcherMike = must(insertedUsers[1], "dispatcherMike");
-  const driverJuan = must(insertedUsers[2], "driverJuan");
-  const driverMaria = must(insertedUsers[3], "driverMaria");
-  const dispatcherJane = must(insertedUsers[4], "dispatcherJane");
+  const dispatcherUser = must(insertedUsers[1], "dispatcherUser");
 
   console.log(`  Inserted ${insertedUsers.length} users.`);
   for (const u of insertedUsers) {
@@ -428,7 +403,7 @@ async function seed() {
         severity: "medium" as const,
         message: "Bin ECO-BIN-1002 battery at 3.5V. Schedule replacement within the next week.",
         isAcknowledged: true,
-        acknowledgedBy: dispatcherMike.id,
+        acknowledgedBy: dispatcherUser.id,
         acknowledgedAt: hoursAgo(10),
         createdAt: daysAgo(1),
       },
@@ -475,7 +450,7 @@ async function seed() {
         optimizationScore: 87.5,
         estimatedDistanceKm: 4.2,
         estimatedDurationMinutes: 45,
-        assignedDriverId: driverJuan.id,
+        assignedDriverId: dispatcherUser.id,
         assignedVehicleId: "TRK-001",
         scheduledDate: daysAgo(1),
         startedAt: new Date(daysAgo(1).getTime() + 6 * 60 * 60 * 1000), // 6am yesterday
@@ -488,7 +463,7 @@ async function seed() {
         optimizationScore: 92.1,
         estimatedDistanceKm: 3.8,
         estimatedDurationMinutes: 40,
-        assignedDriverId: driverMaria.id,
+        assignedDriverId: dispatcherUser.id,
         assignedVehicleId: "TRK-002",
         scheduledDate: daysAgo(2),
         startedAt: new Date(daysAgo(2).getTime() + 7 * 60 * 60 * 1000),
@@ -501,7 +476,7 @@ async function seed() {
         optimizationScore: 85.0,
         estimatedDistanceKm: 5.1,
         estimatedDurationMinutes: 55,
-        assignedDriverId: driverJuan.id,
+        assignedDriverId: dispatcherUser.id,
         assignedVehicleId: "TRK-001",
         scheduledDate: now,
         startedAt: hoursAgo(1),
@@ -514,7 +489,7 @@ async function seed() {
         optimizationScore: 88.3,
         estimatedDistanceKm: 4.5,
         estimatedDurationMinutes: 50,
-        assignedDriverId: driverMaria.id,
+        assignedDriverId: dispatcherUser.id,
         assignedVehicleId: "TRK-002",
         scheduledDate: hoursFromNow(24),
         startedAt: null,
@@ -527,7 +502,7 @@ async function seed() {
         optimizationScore: null,
         estimatedDistanceKm: 3.5,
         estimatedDurationMinutes: 35,
-        assignedDriverId: driverJuan.id,
+        assignedDriverId: dispatcherUser.id,
         assignedVehicleId: "TRK-001",
         scheduledDate: daysAgo(3),
         startedAt: null,
@@ -752,7 +727,7 @@ async function seed() {
     .values([
       {
         deviceId: insertedBins[0].id, // ECO-BIN-1001
-        driverId: driverJuan.id,
+        driverId: dispatcherUser.id,
         routeId: route1.id,
         eventType: "collection",
         latitude: 10.3160,
@@ -763,7 +738,7 @@ async function seed() {
       },
       {
         deviceId: insertedBins[1].id, // ECO-BIN-1002
-        driverId: driverJuan.id,
+        driverId: dispatcherUser.id,
         routeId: route1.id,
         eventType: "collection",
         latitude: 10.3155,
@@ -774,7 +749,7 @@ async function seed() {
       },
       {
         deviceId: insertedBins[4].id, // ECO-BIN-1005
-        driverId: driverMaria.id,
+        driverId: dispatcherUser.id,
         routeId: route2.id,
         eventType: "collection",
         latitude: 10.3340,
@@ -785,7 +760,7 @@ async function seed() {
       },
       {
         deviceId: insertedBins[5].id, // ECO-BIN-1006
-        driverId: driverMaria.id,
+        driverId: dispatcherUser.id,
         routeId: route2.id,
         eventType: "collection",
         latitude: 10.3332,
@@ -796,7 +771,7 @@ async function seed() {
       },
       {
         deviceId: insertedBins[0].id, // ECO-BIN-1001
-        driverId: driverJuan.id,
+        driverId: dispatcherUser.id,
         routeId: route3.id,
         eventType: "collection",
         latitude: 10.3160,
@@ -841,9 +816,9 @@ async function seed() {
         userId: adminUser.id,
         channel: "in_app" as const,
         title: "Route Completed",
-        body: "Route in Maple Heights has been completed by Maria Santos. 3 of 4 bins serviced.",
+        body: "Route in Maple Heights has been completed by Dispatcher. 3 of 4 bins serviced.",
         isRead: true,
-        metadata: { routeId: route2.id, driverName: "Maria Santos" },
+        metadata: { routeId: route2.id, driverName: "Dispatcher" },
         createdAt: daysAgo(2),
       },
     ])

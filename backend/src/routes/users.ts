@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { getDb } from "../config/database";
-import { getSupabaseAdmin } from "../config/supabase";
 import { users } from "../db/schema";
 import { requireRole } from "../middleware/rbac";
+import { useSupabaseAuth } from "../config/env";
+import { hashPassword } from "../utils/password";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -30,6 +31,7 @@ const updateUserSchema = z.object({
   phone: z.string().max(50).optional(),
   avatarUrl: z.string().url().optional(),
   subdivisionId: z.string().uuid().nullable().optional(),
+  isActive: z.boolean().optional(),
 });
 
 // ─── GET / — List users (filterable by subdivision, role) ───────────────────
@@ -106,35 +108,56 @@ app.post("/", async (c) => {
   }
 
   const { password, ...userData } = parsed.data;
-  const supabase = getSupabaseAdmin();
-
-  // Create Supabase auth user
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-    email: userData.email,
-    password,
-    email_confirm: true,
-  });
-
-  if (authError) {
-    return c.json({ error: "Failed to create auth user", details: authError.message }, 500);
-  }
-
   const db = getDb();
 
-  const [created] = await db
-    .insert(users)
-    .values({
-      email: userData.email,
-      fullName: userData.fullName,
-      role: userData.role,
-      phone: userData.phone,
-      avatarUrl: userData.avatarUrl,
-      subdivisionId: userData.subdivisionId,
-      supabaseUid: authData.user.id,
-    })
-    .returning();
+  // Check for duplicate email
+  const existing = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, userData.email))
+    .limit(1);
 
-  return c.json({ data: created }, 201);
+  if (existing.length > 0) {
+    return c.json({ error: "Email already in use" }, 400);
+  }
+
+  if (useSupabaseAuth) {
+    const { getSupabaseAdmin } = await import("../config/supabase");
+    const supabase = getSupabaseAdmin();
+
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email: userData.email,
+      password,
+      email_confirm: true,
+    });
+
+    if (authError) {
+      return c.json({ error: "Failed to create auth user", details: authError.message }, 500);
+    }
+
+    const [created] = await db
+      .insert(users)
+      .values({
+        ...userData,
+        supabaseUid: authData.user.id,
+      })
+      .returning();
+
+    return c.json({ data: created }, 201);
+  } else {
+    // Local JWT mode — hash password and store locally
+    const pwHash = await hashPassword(password);
+
+    const [created] = await db
+      .insert(users)
+      .values({
+        ...userData,
+        passwordHash: pwHash,
+      })
+      .returning();
+
+    return c.json({ data: created }, 201);
+  }
 });
 
 // ─── PUT /:id — Update user ────────────────────────────────────────────────

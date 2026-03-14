@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import { Leaf, LogIn, AlertCircle } from "lucide-react";
+import { Trash2, LogIn, AlertCircle } from "lucide-react";
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -26,22 +26,8 @@ export function LoginPage() {
 
     try {
       await login(email, password);
-    } catch (err: unknown) {
-      if (
-        err &&
-        typeof err === "object" &&
-        "response" in err &&
-        err.response &&
-        typeof err.response === "object" &&
-        "data" in err.response &&
-        err.response.data &&
-        typeof err.response.data === "object" &&
-        "message" in err.response.data
-      ) {
-        setError(String(err.response.data.message));
-      } else {
-        setError("Invalid email or password. Please try again.");
-      }
+    } catch {
+      setError("Unable to sign in. Please check your credentials and try again.");
     } finally {
       setIsLoading(false);
     }
@@ -60,7 +46,7 @@ export function LoginPage() {
         <CardHeader className="space-y-4 text-center pb-2">
           {/* Logo */}
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-emerald-600 shadow-lg shadow-green-200">
-            <Leaf className="h-7 w-7 text-white" />
+            <Trash2 className="h-7 w-7 text-white" />
           </div>
           <div>
             <CardTitle className="text-2xl font-bold tracking-tight">

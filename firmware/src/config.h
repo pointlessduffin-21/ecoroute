@@ -36,6 +36,12 @@
 #define CMD_FORCE_REPORT        0x02
 #define CMD_FACTORY_RESET       0x03
 
+// ─── MQTT Broker ────────────────────────────────────────────────────────────
+#define MQTT_BROKER_HOST        "109.123.238.215"
+#define MQTT_BROKER_PORT        1883
+#define MQTT_TOPIC_PREFIX       "ecoroute/trash_can/"
+#define MQTT_CONNECT_TIMEOUT_MS 10000
+
 // ─── Default Configuration ──────────────────────────────────────────────────
 #define DEFAULT_REPORT_INTERVAL_SEC  900      // 15 minutes
 #define DEFAULT_BIN_HEIGHT_CM        100.0f

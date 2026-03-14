@@ -1,9 +1,9 @@
-FROM oven/bun:1 AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile
+COPY package.json package-lock.json* ./
+RUN npm ci && npm cache clean --force
 COPY . .
-RUN bun run build
+RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html

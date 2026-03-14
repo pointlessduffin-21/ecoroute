@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { serve } from "@hono/node-server";
 import { authMiddleware } from "./middleware/auth";
 import { auditMiddleware } from "./middleware/audit";
 import type { AppVariables } from "./types/context";
@@ -56,6 +58,10 @@ app.get("/", (c) => {
 app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// ─── Static file serving (uploads) ──────────────────────────────────────────
+
+app.use("/uploads/*", serveStatic({ root: "./" }));
 
 // ─── Public routes (no auth) ─────────────────────────────────────────────────
 
@@ -129,6 +135,16 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
+// Node.js: start via @hono/node-server
+// Bun: uses the default export below
+const isBun = typeof globalThis.Bun !== "undefined";
+if (!isBun) {
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`Server listening on http://localhost:${info.port}`);
+  });
+}
+
+// Bun runtime uses this export
 export default {
   port,
   fetch: app.fetch,

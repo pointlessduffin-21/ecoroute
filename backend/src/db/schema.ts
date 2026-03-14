@@ -101,6 +101,7 @@ export const users = pgTable(
     role: userRoleEnum("role").notNull().default("driver"),
     phone: varchar("phone", { length: 50 }),
     avatarUrl: text("avatar_url"),
+    passwordHash: text("password_hash"),
     isActive: boolean("is_active").default(true).notNull(),
     supabaseUid: uuid("supabase_uid").unique(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -137,6 +138,7 @@ export const smartBins = pgTable(
     installDate: timestamp("install_date", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     firmwareVersion: varchar("firmware_version", { length: 50 }),
+    photoUrl: text("photo_url"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

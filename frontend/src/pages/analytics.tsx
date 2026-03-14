@@ -700,7 +700,7 @@ export function AnalyticsPage() {
                     <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                     <Tooltip
                       contentStyle={tooltipStyle}
-                      formatter={(value: number | undefined, name?: string) => {
+                      formatter={(value, name) => {
                         if (name === "binsServiced") return [`${value ?? 0}`, "Bins Serviced"];
                         if (name === "avgDistance") return [`${value ?? 0} km`, "Avg Distance"];
                         return [`${value ?? 0}`, name ?? ""];
@@ -755,7 +755,7 @@ export function AnalyticsPage() {
                       </Pie>
                       <Tooltip
                         contentStyle={tooltipStyle}
-                        formatter={(value: number | undefined, name?: string) => [
+                        formatter={(value, name) => [
                           `${value ?? 0} routes`,
                           name ?? "",
                         ]}

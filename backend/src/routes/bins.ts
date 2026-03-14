@@ -5,6 +5,7 @@ import { getDb } from "../config/database";
 import { smartBins, binTelemetry, fillPredictions } from "../db/schema";
 import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
+import mqtt from "mqtt";
 
 const app = new Hono<{ Variables: AppVariables }>();
 
@@ -32,6 +33,7 @@ const updateBinSchema = z.object({
   thresholdPercent: z.number().min(0).max(100).optional(),
   status: z.enum(["active", "inactive", "maintenance", "offline"]).optional(),
   firmwareVersion: z.string().max(50).optional(),
+  photoUrl: z.string().url().optional(),
 });
 
 // ─── GET / — List smart bins (filterable by subdivision, status) ────────────
@@ -176,6 +178,46 @@ app.put("/:id", requireRole("admin", "dispatcher"), async (c) => {
   return c.json({ data: updated });
 });
 
+// ─── POST /:id/photo — Upload bin photo ─────────────────────────────────────
+
+app.post("/:id/photo", requireRole("admin", "dispatcher"), async (c) => {
+  const { id } = c.req.param();
+  const db = getDb();
+
+  // Verify bin exists
+  const [bin] = await db.select({ id: smartBins.id }).from(smartBins).where(eq(smartBins.id, id)).limit(1);
+  if (!bin) return c.json({ error: "Bin not found" }, 404);
+
+  const body = await c.req.parseBody();
+  const file = body["photo"];
+
+  if (!file || !(file instanceof File)) {
+    return c.json({ error: "No photo file provided" }, 400);
+  }
+
+  // Save to /app/uploads (Docker) or ./uploads (local)
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  const uploadsDir = path.join(process.cwd(), "uploads", "bins");
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = file.name.split(".").pop() || "jpg";
+  const filename = `${id}-${Date.now()}.${ext}`;
+  const filepath = path.join(uploadsDir, filename);
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await fs.writeFile(filepath, buffer);
+
+  const photoUrl = `/uploads/bins/${filename}`;
+
+  await db
+    .update(smartBins)
+    .set({ photoUrl, updatedAt: new Date() })
+    .where(eq(smartBins.id, id));
+
+  return c.json({ data: { photoUrl } });
+});
+
 // ─── DELETE /:id — Set status to inactive (admin/dispatcher only) ───────────
 
 app.delete("/:id", requireRole("admin", "dispatcher"), async (c) => {
@@ -292,6 +334,90 @@ app.get("/:id/predictions", async (c) => {
       limit,
       offset,
     },
+  });
+});
+
+// ─── POST /mqtt-test — Test MQTT by listening for a message on a topic ──────
+
+const mqttTestSchema = z.object({
+  broker: z.string().min(1),
+  port: z.number().int().min(1).max(65535),
+  topic: z.string().min(1),
+});
+
+app.post("/mqtt-test", requireRole("admin", "dispatcher"), async (c) => {
+  const body = await c.req.json();
+  const parsed = mqttTestSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return c.json({ error: "Validation failed", details: parsed.error.flatten() }, 400);
+  }
+
+  const { broker, port, topic } = parsed.data;
+  const brokerUrl = `mqtt://${broker}:${port}`;
+
+  return new Promise((resolve) => {
+    const timeout = 15000; // 15 seconds
+    let done = false;
+
+    const testClient = mqtt.connect(brokerUrl, {
+      clientId: `ecoroute-test-${Date.now()}`,
+      clean: true,
+      connectTimeout: 10000,
+    });
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { testClient.end(true); } catch {}
+      resolve(c.json({
+        success: true,
+        connected: true,
+        message: null,
+        info: `Connected to broker but no message received on "${topic}" within ${timeout / 1000}s`,
+      }));
+    }, timeout);
+
+    testClient.on("connect", () => {
+      testClient.subscribe(topic, { qos: 0 }, (err) => {
+        if (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try { testClient.end(true); } catch {}
+          resolve(c.json({ success: false, error: `Subscribe failed: ${err.message}` }, 500));
+        }
+      });
+    });
+
+    testClient.on("message", (_msgTopic, payload) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload.toString());
+      } catch {
+        parsed = payload.toString();
+      }
+
+      try { testClient.end(true); } catch {}
+      resolve(c.json({
+        success: true,
+        connected: true,
+        topic: _msgTopic,
+        message: parsed,
+      }));
+    });
+
+    testClient.on("error", (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { testClient.end(true); } catch {}
+      resolve(c.json({ success: false, error: `Connection failed: ${err.message}` }, 500));
+    });
   });
 });
 
