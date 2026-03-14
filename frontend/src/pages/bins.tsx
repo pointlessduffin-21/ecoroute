@@ -193,11 +193,14 @@ export function BinsPage() {
   // MQTT test
   async function handleMqttTest() {
     setMqttTestResult({ status: "loading" });
+    // If topic ends with / or is a prefix, append + wildcard to catch sub-topics
+    let testTopic = formMqttTopic;
+    if (testTopic.endsWith("/")) testTopic += "+";
     try {
       const res = await api.post("/bins/mqtt-test", {
         broker: formMqttBroker,
         port: parseInt(formMqttPort, 10),
-        topic: formMqttTopic,
+        topic: testTopic,
       });
       const data = res.data;
       if (data.success && data.message) {
