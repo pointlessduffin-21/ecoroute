@@ -74,9 +74,10 @@ export function SettingsPage() {
 
   // AI Configuration state
   const [aiSettings, setAiSettings] = useState({
-    aiProvider: "none" as "gemini" | "openrouter" | "none",
+    aiProvider: "none" as "gemini" | "openrouter" | "ollama" | "none",
     aiApiKey: "",
     aiModel: "",
+    aiOllamaUrl: "http://localhost:11434",
   });
   const [aiSaved, setAiSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -165,7 +166,7 @@ export function SettingsPage() {
       if (configMap["ai_provider"] !== undefined) {
         setAiSettings(prev => ({
           ...prev,
-          aiProvider: configMap["ai_provider"] as "gemini" | "openrouter" | "none",
+          aiProvider: configMap["ai_provider"] as "gemini" | "openrouter" | "ollama" | "none",
         }));
       }
       if (configMap["ai_api_key"] !== undefined) {
@@ -178,6 +179,12 @@ export function SettingsPage() {
         setAiSettings(prev => ({
           ...prev,
           aiModel: configMap["ai_model"],
+        }));
+      }
+      if (configMap["ai_ollama_url"] !== undefined) {
+        setAiSettings(prev => ({
+          ...prev,
+          aiOllamaUrl: configMap["ai_ollama_url"],
         }));
       }
     }
@@ -216,6 +223,7 @@ export function SettingsPage() {
       { key: "ai_provider", value: aiSettings.aiProvider },
       { key: "ai_api_key", value: aiSettings.aiApiKey },
       { key: "ai_model", value: aiSettings.aiModel },
+      { key: "ai_ollama_url", value: aiSettings.aiOllamaUrl },
     ]);
     setAiSaved(true);
     setTimeout(() => setAiSaved(false), 2000);
@@ -224,6 +232,7 @@ export function SettingsPage() {
   const getModelPlaceholder = () => {
     if (aiSettings.aiProvider === "gemini") return "gemini-2.0-flash";
     if (aiSettings.aiProvider === "openrouter") return "google/gemini-2.0-flash-001";
+    if (aiSettings.aiProvider === "ollama") return "llama3.2";
     return "Select a provider first";
   };
 
@@ -560,6 +569,7 @@ export function SettingsPage() {
                   {([
                     { value: "gemini" as const, label: "Google Gemini", description: "Direct Gemini API access" },
                     { value: "openrouter" as const, label: "OpenRouter", description: "Multi-provider gateway" },
+                    { value: "ollama" as const, label: "Ollama", description: "Local AI (no API key needed)" },
                     { value: "none" as const, label: "Disabled", description: "AI features off" },
                   ] as const).map((provider) => (
                     <label
@@ -578,7 +588,7 @@ export function SettingsPage() {
                         onChange={(e) =>
                           setAiSettings({
                             ...aiSettings,
-                            aiProvider: e.target.value as "gemini" | "openrouter" | "none",
+                            aiProvider: e.target.value as "gemini" | "openrouter" | "ollama" | "none",
                           })
                         }
                         className="mt-0.5"
@@ -592,60 +602,83 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              {/* API Key & Model - Only show when provider is selected */}
+              {/* Provider config - Only show when provider is selected */}
               {aiSettings.aiProvider !== "none" && (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {/* API Key Input */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">API Key</label>
-                    <div className="relative">
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {/* Ollama: URL instead of API key */}
+                    {aiSettings.aiProvider === "ollama" ? (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Ollama URL</label>
+                        <Input
+                          value={aiSettings.aiOllamaUrl}
+                          onChange={(e) =>
+                            setAiSettings({
+                              ...aiSettings,
+                              aiOllamaUrl: e.target.value,
+                            })
+                          }
+                          placeholder="http://localhost:11434"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          URL of your running Ollama instance. No API key needed.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">API Key</label>
+                        <div className="relative">
+                          <Input
+                            type={showApiKey ? "text" : "password"}
+                            value={aiSettings.aiApiKey}
+                            onChange={(e) =>
+                              setAiSettings({
+                                ...aiSettings,
+                                aiApiKey: e.target.value,
+                              })
+                            }
+                            placeholder="Enter your API key"
+                            className="pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showApiKey ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Your API key is stored securely on the server.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Model Selection */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Model Name</label>
                       <Input
-                        type={showApiKey ? "text" : "password"}
-                        value={aiSettings.aiApiKey}
+                        value={aiSettings.aiModel}
                         onChange={(e) =>
                           setAiSettings({
                             ...aiSettings,
-                            aiApiKey: e.target.value,
+                            aiModel: e.target.value,
                           })
                         }
-                        placeholder="Enter your API key"
-                        className="pr-10"
+                        placeholder={getModelPlaceholder()}
                       />
-                      <button
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        {showApiKey ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </button>
+                      <p className="text-xs text-muted-foreground">
+                        {aiSettings.aiProvider === "gemini"
+                          ? "Default: gemini-2.0-flash"
+                          : aiSettings.aiProvider === "ollama"
+                            ? "Default: llama3.2 (run: ollama pull llama3.2)"
+                            : "Default: google/gemini-2.0-flash-001"}
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Your API key is stored securely on the server.
-                    </p>
-                  </div>
-
-                  {/* Model Selection */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Model Name</label>
-                    <Input
-                      value={aiSettings.aiModel}
-                      onChange={(e) =>
-                        setAiSettings({
-                          ...aiSettings,
-                          aiModel: e.target.value,
-                        })
-                      }
-                      placeholder={getModelPlaceholder()}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {aiSettings.aiProvider === "gemini"
-                        ? "Default: gemini-2.0-flash"
-                        : "Default: google/gemini-2.0-flash-001"}
-                    </p>
                   </div>
                 </div>
               )}

@@ -27,9 +27,10 @@ export interface InsightResponse {
 }
 
 interface AIConfig {
-  provider: "gemini" | "openrouter";
+  provider: "gemini" | "openrouter" | "ollama";
   apiKey: string;
   model: string;
+  ollamaUrl?: string;
 }
 
 // ─── Config helpers ──────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ async function getAIConfig(): Promise<AIConfig> {
     })
     .from(systemConfig)
     .where(
-      sql`${systemConfig.configKey} IN ('ai_provider', 'ai_api_key', 'ai_model')
+      sql`${systemConfig.configKey} IN ('ai_provider', 'ai_api_key', 'ai_model', 'ai_ollama_url')
           AND ${systemConfig.subdivisionId} IS NULL`
     );
 
@@ -53,21 +54,25 @@ async function getAIConfig(): Promise<AIConfig> {
     configMap[row.key] = row.value;
   }
 
-  const provider = (configMap["ai_provider"] as "gemini" | "openrouter") || "gemini";
+  const provider = (configMap["ai_provider"] as "gemini" | "openrouter" | "ollama") || "gemini";
   const apiKey = configMap["ai_api_key"] || "";
+  const ollamaUrl = configMap["ai_ollama_url"] || "http://localhost:11434";
+
   const defaultModel =
     provider === "gemini"
       ? "gemini-2.0-flash"
-      : "google/gemini-2.0-flash-001";
+      : provider === "ollama"
+        ? "llama3.2"
+        : "google/gemini-2.0-flash-001";
   const model = configMap["ai_model"] || defaultModel;
 
-  if (!apiKey) {
+  if (provider !== "ollama" && !apiKey) {
     throw new Error(
       "AI API key not configured. Set the 'ai_api_key' value in system_config."
     );
   }
 
-  return { provider, apiKey, model };
+  return { provider, apiKey, model, ollamaUrl };
 }
 
 // ─── Data fetchers ───────────────────────────────────────────────────────────
@@ -425,6 +430,52 @@ async function callOpenRouter(
   return text;
 }
 
+async function callOllama(
+  baseUrl: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const response = await fetch(`${baseUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      stream: false,
+      options: {
+        temperature: 0.7,
+        num_predict: 1024,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Ollama API error (${response.status}): ${errorBody}`);
+  }
+
+  const json = (await response.json()) as {
+    message?: { content?: string };
+    error?: string;
+  };
+
+  if (json.error) {
+    throw new Error(`Ollama error: ${json.error}`);
+  }
+
+  const text = json.message?.content;
+
+  if (!text) {
+    throw new Error("Ollama returned an empty response.");
+  }
+
+  return text;
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 export async function generateInsight(
@@ -460,19 +511,11 @@ export async function generateInsight(
   let insight: string;
 
   if (config.provider === "gemini") {
-    insight = await callGemini(
-      config.apiKey,
-      config.model,
-      SYSTEM_PROMPT,
-      userPrompt
-    );
+    insight = await callGemini(config.apiKey, config.model, SYSTEM_PROMPT, userPrompt);
+  } else if (config.provider === "ollama") {
+    insight = await callOllama(config.ollamaUrl ?? "http://localhost:11434", config.model, SYSTEM_PROMPT, userPrompt);
   } else {
-    insight = await callOpenRouter(
-      config.apiKey,
-      config.model,
-      SYSTEM_PROMPT,
-      userPrompt
-    );
+    insight = await callOpenRouter(config.apiKey, config.model, SYSTEM_PROMPT, userPrompt);
   }
 
   return {
