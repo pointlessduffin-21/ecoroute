@@ -138,6 +138,7 @@ export const smartBins = pgTable(
     installDate: timestamp("install_date", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     firmwareVersion: varchar("firmware_version", { length: 50 }),
+    photoUrl: text("photo_url"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

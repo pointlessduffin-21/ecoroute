@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
-import type { DashboardStats, Alert, FillLevelDistribution } from "@/types/api";
+import type { DashboardStats, Alert, FillLevelDistribution, SmartBin, BinTelemetry, PaginatedResponse } from "@/types/api";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -116,6 +117,8 @@ function timeAgo(dateStr: string): string {
 // ---------------------------------------------------------------------------
 
 export function DashboardPage() {
+  const navigate = useNavigate();
+
   const {
     data: stats,
     isLoading: statsLoading,
@@ -165,6 +168,37 @@ export function DashboardPage() {
         { range: "90-100%", count: fillLevelData.distribution.critical, fill: "#dc2626" },
       ]
     : null;
+
+  // Fetch bins + telemetry for live overview
+  const { data: binsResponse } = useQuery({
+    queryKey: ["bins"],
+    queryFn: async () => {
+      const res = await api.get<PaginatedResponse<SmartBin>>("/bins");
+      return res.data;
+    },
+    retry: false,
+  });
+
+  const { data: telemetryMap } = useQuery({
+    queryKey: ["bins-telemetry"],
+    queryFn: async () => {
+      const res = await api.get<PaginatedResponse<BinTelemetry>>("/telemetry?limit=200&sort=-recordedAt");
+      const map: Record<string, BinTelemetry> = {};
+      for (const t of res.data.data) {
+        if (!map[t.deviceId]) map[t.deviceId] = t;
+      }
+      return map;
+    },
+    retry: false,
+  });
+
+  const allBins = binsResponse?.data ?? [];
+  const tMap = telemetryMap ?? {};
+
+  // Sort bins by fill level descending (highest first)
+  const binsWithFill = allBins
+    .map((b) => ({ ...b, fill: tMap[b.id]?.fillLevelPercent ?? 0, telemetry: tMap[b.id] }))
+    .sort((a, b) => b.fill - a.fill);
 
   const dashboardStats = stats;
   const recentAlerts = alertsData ?? [];
@@ -353,6 +387,62 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ---- Live Bins Overview ---- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Bin Status Overview</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {binsWithFill.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No bins registered.</p>
+          ) : (
+            <div className="space-y-3">
+              {binsWithFill.slice(0, 8).map((b) => (
+                <div
+                  key={b.id}
+                  className="flex items-center gap-4 p-3 rounded-lg border border-border hover:bg-muted/50 cursor-pointer transition-colors"
+                  onClick={() => navigate(`/bins/${b.id}`)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{b.deviceCode}</span>
+                      <Badge
+                        variant={
+                          b.status === "active" ? "success"
+                            : b.status === "offline" ? "destructive"
+                            : b.status === "maintenance" ? "warning"
+                            : "secondary"
+                        }
+                        className="text-[10px]"
+                      >
+                        {b.status}
+                      </Badge>
+                    </div>
+                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all",
+                          b.fill > 80 ? "bg-red-500" : b.fill >= 50 ? "bg-yellow-500" : "bg-green-500"
+                        )}
+                        style={{ width: `${b.fill}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold">{b.fill.toFixed(0)}%</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {b.telemetry?.batteryVoltage != null
+                        ? `${b.telemetry.batteryVoltage.toFixed(1)}V`
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -1,5 +1,6 @@
+import { useState, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   LineChart,
   Line,
@@ -14,6 +15,8 @@ import api from "@/lib/api";
 import type { SmartBin, BinTelemetry } from "@/types/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn, formatDateTime } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -26,6 +29,10 @@ import {
   Gauge,
   Radio,
   Cpu,
+  Pencil,
+  X,
+  Camera,
+  Upload,
 } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 
@@ -42,14 +49,27 @@ function fillBarColor(percent: number): string {
   return "bg-green-500";
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL?.replace("/api/v1", "") || "http://localhost:3000";
+
 export function BinDetailsPage() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Edit modal state
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    deviceCode: "",
+    capacityLiters: "",
+    thresholdPercent: "",
+    status: "active" as string,
+  });
 
   const { data: binData, isLoading: binLoading } = useQuery({
     queryKey: ["bin", id],
     queryFn: async () => {
       const res = await api.get(`/bins/${id}`);
-      return res.data.data as SmartBin & { latestTelemetry: BinTelemetry | null };
+      return res.data.data as SmartBin & { latestTelemetry: BinTelemetry | null; photoUrl?: string | null };
     },
     enabled: !!id,
   });
@@ -63,6 +83,57 @@ export function BinDetailsPage() {
     enabled: !!id,
     refetchInterval: 30000,
   });
+
+  const updateBinMutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const res = await api.put(`/bins/${id}`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bin", id] });
+      setEditOpen(false);
+    },
+  });
+
+  const uploadPhotoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("photo", file);
+      const res = await api.post(`/bins/${id}/photo`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bin", id] });
+    },
+  });
+
+  function openEdit() {
+    if (!binData) return;
+    setEditForm({
+      deviceCode: binData.deviceCode,
+      capacityLiters: String(binData.capacityLiters),
+      thresholdPercent: String(binData.thresholdPercent),
+      status: binData.status,
+    });
+    setEditOpen(true);
+  }
+
+  function handleEditSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    updateBinMutation.mutate({
+      deviceCode: editForm.deviceCode,
+      capacityLiters: parseFloat(editForm.capacityLiters),
+      thresholdPercent: parseFloat(editForm.thresholdPercent),
+      status: editForm.status,
+    });
+  }
+
+  function handlePhotoSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) uploadPhotoMutation.mutate(file);
+  }
 
   if (binLoading) {
     return (
@@ -87,15 +158,12 @@ export function BinDetailsPage() {
   const latest = bin.latestTelemetry;
   const fill = latest?.fillLevelPercent ?? 0;
 
-  // Chart data — reverse so oldest first
   const chartData = (telemetryData ?? [])
     .slice()
     .reverse()
     .map((t) => ({
       time: new Date(t.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       fill: t.fillLevelPercent,
-      battery: t.batteryVoltage ?? 0,
-      signal: t.signalStrength ?? 0,
     }));
 
   const tooltipStyle = {
@@ -113,9 +181,31 @@ export function BinDetailsPage() {
           <ArrowLeft className="h-4 w-4" /> Back to Bins
         </Link>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <Trash2 className="h-5 w-5 text-primary" />
+          <div className="flex items-center gap-4">
+            {/* Bin photo */}
+            <div
+              className="relative h-14 w-14 rounded-lg overflow-hidden bg-muted flex items-center justify-center cursor-pointer group"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {bin.photoUrl ? (
+                <img
+                  src={`${API_BASE}${bin.photoUrl}`}
+                  alt={bin.deviceCode}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <Camera className="h-6 w-6 text-muted-foreground" />
+              )}
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <Upload className="h-4 w-4 text-white" />
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handlePhotoSelect}
+              />
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">{bin.deviceCode}</h1>
@@ -124,9 +214,15 @@ export function BinDetailsPage() {
               </p>
             </div>
           </div>
-          <Badge variant={statusBadgeVariant[bin.status] ?? "secondary"} className="text-sm">
-            {bin.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={openEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+            <Badge variant={statusBadgeVariant[bin.status] ?? "secondary"} className="text-sm">
+              {bin.status}
+            </Badge>
+          </div>
         </div>
       </div>
 
@@ -184,16 +280,13 @@ export function BinDetailsPage() {
             <div className="text-2xl font-bold">
               {latest?.distanceCm != null ? `${latest.distanceCm.toFixed(1)} cm` : "N/A"}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Capacity: {bin.capacityLiters}L
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Capacity: {bin.capacityLiters}L</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts + Map row */}
+      {/* Charts + Map */}
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Fill Level Chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-base">Fill Level History</CardTitle>
@@ -220,7 +313,6 @@ export function BinDetailsPage() {
           </CardContent>
         </Card>
 
-        {/* Map */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Location</CardTitle>
@@ -248,7 +340,6 @@ export function BinDetailsPage() {
 
       {/* Device Info + Telemetry Table */}
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Device Info */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Device Info</CardTitle>
@@ -282,7 +373,6 @@ export function BinDetailsPage() {
           </CardContent>
         </Card>
 
-        {/* Recent Telemetry Table */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-base">Recent Telemetry</CardTitle>
@@ -320,6 +410,78 @@ export function BinDetailsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Edit Modal */}
+      {editOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setEditOpen(false)} />
+          <Card className="relative z-10 w-full max-w-md mx-4">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Edit Bin</CardTitle>
+                <button onClick={() => setEditOpen(false)} className="rounded-md p-1 hover:bg-muted">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleEditSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Device Code</label>
+                  <Input
+                    value={editForm.deviceCode}
+                    onChange={(e) => setEditForm({ ...editForm, deviceCode: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Capacity (L)</label>
+                    <Input
+                      type="number"
+                      value={editForm.capacityLiters}
+                      onChange={(e) => setEditForm({ ...editForm, capacityLiters: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Threshold (%)</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={editForm.thresholdPercent}
+                      onChange={(e) => setEditForm({ ...editForm, thresholdPercent: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Status</label>
+                  <select
+                    value={editForm.status}
+                    onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                    className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={updateBinMutation.isPending}>
+                    {updateBinMutation.isPending ? "Saving..." : "Save Changes"}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

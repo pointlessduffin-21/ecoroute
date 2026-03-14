@@ -33,6 +33,7 @@ const updateBinSchema = z.object({
   thresholdPercent: z.number().min(0).max(100).optional(),
   status: z.enum(["active", "inactive", "maintenance", "offline"]).optional(),
   firmwareVersion: z.string().max(50).optional(),
+  photoUrl: z.string().url().optional(),
 });
 
 // ─── GET / — List smart bins (filterable by subdivision, status) ────────────
@@ -175,6 +176,46 @@ app.put("/:id", requireRole("admin", "dispatcher"), async (c) => {
   }
 
   return c.json({ data: updated });
+});
+
+// ─── POST /:id/photo — Upload bin photo ─────────────────────────────────────
+
+app.post("/:id/photo", requireRole("admin", "dispatcher"), async (c) => {
+  const { id } = c.req.param();
+  const db = getDb();
+
+  // Verify bin exists
+  const [bin] = await db.select({ id: smartBins.id }).from(smartBins).where(eq(smartBins.id, id)).limit(1);
+  if (!bin) return c.json({ error: "Bin not found" }, 404);
+
+  const body = await c.req.parseBody();
+  const file = body["photo"];
+
+  if (!file || !(file instanceof File)) {
+    return c.json({ error: "No photo file provided" }, 400);
+  }
+
+  // Save to /app/uploads (Docker) or ./uploads (local)
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  const uploadsDir = path.join(process.cwd(), "uploads", "bins");
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = file.name.split(".").pop() || "jpg";
+  const filename = `${id}-${Date.now()}.${ext}`;
+  const filepath = path.join(uploadsDir, filename);
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await fs.writeFile(filepath, buffer);
+
+  const photoUrl = `/uploads/bins/${filename}`;
+
+  await db
+    .update(smartBins)
+    .set({ photoUrl, updatedAt: new Date() })
+    .where(eq(smartBins.id, id));
+
+  return c.json({ data: { photoUrl } });
 });
 
 // ─── DELETE /:id — Set status to inactive (admin/dispatcher only) ───────────

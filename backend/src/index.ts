@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { authMiddleware } from "./middleware/auth";
 import { auditMiddleware } from "./middleware/audit";
@@ -57,6 +58,10 @@ app.get("/", (c) => {
 app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// ─── Static file serving (uploads) ──────────────────────────────────────────
+
+app.use("/uploads/*", serveStatic({ root: "./" }));
 
 // ─── Public routes (no auth) ─────────────────────────────────────────────────
 
