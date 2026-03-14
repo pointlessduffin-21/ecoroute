@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
 import api from "@/lib/api";
 import type { SmartBin, BinTelemetry } from "@/types/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -49,6 +49,11 @@ function fillBarColor(percent: number): string {
   return "bg-green-500";
 }
 
+function EditMapClickHandler({ onSelect }: { onSelect: (lat: number, lng: number) => void }) {
+  useMapEvents({ click(e) { onSelect(e.latlng.lat, e.latlng.lng); } });
+  return null;
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL?.replace("/api/v1", "") || "http://localhost:3000";
 
 export function BinDetailsPage() {
@@ -63,6 +68,8 @@ export function BinDetailsPage() {
     capacityLiters: "",
     thresholdPercent: "",
     status: "active" as string,
+    latitude: "",
+    longitude: "",
   });
 
   const { data: binData, isLoading: binLoading } = useQuery({
@@ -116,6 +123,8 @@ export function BinDetailsPage() {
       capacityLiters: String(binData.capacityLiters),
       thresholdPercent: String(binData.thresholdPercent),
       status: binData.status,
+      latitude: String(binData.latitude),
+      longitude: String(binData.longitude),
     });
     setEditOpen(true);
   }
@@ -127,6 +136,8 @@ export function BinDetailsPage() {
       capacityLiters: parseFloat(editForm.capacityLiters),
       thresholdPercent: parseFloat(editForm.thresholdPercent),
       status: editForm.status,
+      latitude: parseFloat(editForm.latitude),
+      longitude: parseFloat(editForm.longitude),
     });
   }
 
@@ -413,9 +424,9 @@ export function BinDetailsPage() {
 
       {/* Edit Modal */}
       {editOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto py-8">
           <div className="absolute inset-0 bg-black/50" onClick={() => setEditOpen(false)} />
-          <Card className="relative z-10 w-full max-w-md mx-4">
+          <Card className="relative z-10 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Edit Bin</CardTitle>
@@ -434,6 +445,17 @@ export function BinDetailsPage() {
                     required
                   />
                 </div>
+
+                {/* MQTT Topic (read-only, derived from device code) */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">MQTT Topic</label>
+                  <Input
+                    value={`ecoroute/trash_can/${editForm.deviceCode}`}
+                    disabled
+                    className="opacity-60 font-mono text-xs"
+                  />
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Capacity (L)</label>
@@ -456,6 +478,7 @@ export function BinDetailsPage() {
                     />
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Status</label>
                   <select
@@ -469,6 +492,56 @@ export function BinDetailsPage() {
                     <option value="offline">Offline</option>
                   </select>
                 </div>
+
+                {/* Location — Map Picker */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    Location
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">(click map to move)</span>
+                  </label>
+                  <div className="h-44 rounded-md overflow-hidden border border-border">
+                    <MapContainer
+                      center={[parseFloat(editForm.latitude) || 14.5, parseFloat(editForm.longitude) || 121.0]}
+                      zoom={15}
+                      style={{ height: "100%", width: "100%" }}
+                      scrollWheelZoom={true}
+                    >
+                      <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                      />
+                      <EditMapClickHandler onSelect={(lat, lng) => {
+                        setEditForm((f) => ({ ...f, latitude: lat.toFixed(6), longitude: lng.toFixed(6) }));
+                      }} />
+                      {editForm.latitude && editForm.longitude && (
+                        <Marker position={[parseFloat(editForm.latitude), parseFloat(editForm.longitude)]} />
+                      )}
+                    </MapContainer>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Latitude</label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={editForm.latitude}
+                        onChange={(e) => setEditForm({ ...editForm, latitude: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Longitude</label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={editForm.longitude}
+                        onChange={(e) => setEditForm({ ...editForm, longitude: e.target.value })}
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex justify-end gap-3 pt-2">
                   <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
                     Cancel
