@@ -18,7 +18,7 @@ app.use("/*", requireRole("admin"));
 const createUserSchema = z.object({
   email: z.string().email().max(255),
   fullName: z.string().min(1).max(255),
-  role: z.enum(["admin", "dispatcher", "driver"]).default("driver"),
+  role: z.enum(["admin", "dispatcher", "driver", "maintenance"]).default("driver"),
   phone: z.string().max(50).optional(),
   avatarUrl: z.string().url().optional(),
   subdivisionId: z.string().uuid().optional(),
@@ -27,7 +27,7 @@ const createUserSchema = z.object({
 
 const updateUserSchema = z.object({
   fullName: z.string().min(1).max(255).optional(),
-  role: z.enum(["admin", "dispatcher", "driver"]).optional(),
+  role: z.enum(["admin", "dispatcher", "driver", "maintenance"]).optional(),
   phone: z.string().max(50).optional(),
   avatarUrl: z.string().url().optional(),
   subdivisionId: z.string().uuid().nullable().optional(),

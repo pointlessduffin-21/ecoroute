@@ -16,7 +16,7 @@ export interface User {
   subdivisionId: string | null;
   email: string;
   fullName: string;
-  role: "admin" | "dispatcher" | "driver";
+  role: "admin" | "dispatcher" | "driver" | "maintenance";
   phone: string | null;
   avatarUrl: string | null;
   isActive: boolean;

@@ -42,6 +42,8 @@ const roleBadgeVariant = (role: User["role"]) => {
       return "success" as const;
     case "dispatcher":
       return "info" as const;
+    case "maintenance":
+      return "warning" as const;
     case "driver":
       return "secondary" as const;
   }
@@ -53,6 +55,8 @@ const roleIcon = (role: User["role"]) => {
       return <ShieldCheck className="mr-1 h-3 w-3" />;
     case "dispatcher":
       return <Radio className="mr-1 h-3 w-3" />;
+    case "maintenance":
+      return <Truck className="mr-1 h-3 w-3" />;
     case "driver":
       return <Truck className="mr-1 h-3 w-3" />;
   }
@@ -419,6 +423,7 @@ export function UsersPage() {
                     >
                       <option value="admin">Admin</option>
                       <option value="dispatcher">Dispatcher</option>
+                      <option value="maintenance">Maintenance</option>
                     </select>
                   </div>
                   <div className="space-y-2">
@@ -492,6 +497,7 @@ export function UsersPage() {
                     >
                       <option value="admin">Admin</option>
                       <option value="dispatcher">Dispatcher</option>
+                      <option value="maintenance">Maintenance</option>
                     </select>
                   </div>
                   <div className="space-y-2">

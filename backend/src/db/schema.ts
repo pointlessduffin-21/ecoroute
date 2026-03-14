@@ -21,6 +21,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "admin",
   "dispatcher",
   "driver",
+  "maintenance",
 ]);
 
 export const binStatusEnum = pgEnum("bin_status", [
