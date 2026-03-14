@@ -7,6 +7,7 @@ import { env, useSupabaseAuth } from "../config/env";
 import { authMiddleware } from "../middleware/auth";
 import type { AppVariables } from "../types/context";
 import jwt from "jsonwebtoken";
+import { hashPassword, verifyPassword } from "../utils/password";
 
 const app = new Hono<{ Variables: AppVariables }>();
 
@@ -96,8 +97,7 @@ app.post("/login", async (c) => {
       },
     });
   } else {
-    // --- Local JWT mode (dev/demo) ---
-    // In local mode, accept any password for seeded users
+    // --- Local JWT mode ---
     const userResult = await db
       .select()
       .from(users)
@@ -112,6 +112,16 @@ app.post("/login", async (c) => {
 
     if (!user.isActive) {
       return c.json({ error: "Account is deactivated" }, 403);
+    }
+
+    // Verify password
+    if (!user.passwordHash) {
+      return c.json({ error: "Account has no password set. Contact your administrator." }, 401);
+    }
+
+    const validPassword = await verifyPassword(parsed.data.password, user.passwordHash);
+    if (!validPassword) {
+      return c.json({ error: "Invalid credentials" }, 401);
     }
 
     const accessToken = signLocalJwt(user.id, user.email);
@@ -204,6 +214,8 @@ app.post("/register", async (c) => {
       return c.json({ error: "Email already in use" }, 400);
     }
 
+    const pwHash = await hashPassword(parsed.data.password);
+
     const [created] = await db
       .insert(users)
       .values({
@@ -211,6 +223,7 @@ app.post("/register", async (c) => {
         fullName: parsed.data.fullName,
         phone: parsed.data.phone,
         subdivisionId: parsed.data.subdivisionId,
+        passwordHash: pwHash,
         role: "driver",
       })
       .returning();

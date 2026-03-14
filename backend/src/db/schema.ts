@@ -101,6 +101,7 @@ export const users = pgTable(
     role: userRoleEnum("role").notNull().default("driver"),
     phone: varchar("phone", { length: 50 }),
     avatarUrl: text("avatar_url"),
+    passwordHash: text("password_hash"),
     isActive: boolean("is_active").default(true).notNull(),
     supabaseUid: uuid("supabase_uid").unique(),
     createdAt: timestamp("created_at", { withTimezone: true })

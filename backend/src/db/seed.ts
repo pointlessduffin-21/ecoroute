@@ -14,6 +14,7 @@ import {
   fillPredictions,
   auditLogs,
 } from "./schema";
+import { hashPassword } from "../utils/password";
 
 function must<T>(val: T | undefined, label = "value"): T {
   if (val === undefined) throw new Error(`Seed error: ${label} is undefined`);
@@ -112,6 +113,7 @@ async function seed() {
 
   // ── 2. Users ────────────────────────────────────────────────────────────────
   console.log("2. Inserting users...");
+  const defaultPwHash = await hashPassword("password123");
   const insertedUsers = await db
     .insert(users)
     .values([
@@ -122,6 +124,7 @@ async function seed() {
         phone: "+63-917-111-0001",
         isActive: true,
         subdivisionId: gfe.id,
+        passwordHash: defaultPwHash,
       },
       {
         email: "mike.dispatcher@ecoroute.io",
@@ -130,6 +133,7 @@ async function seed() {
         phone: "+63-917-222-0002",
         isActive: true,
         subdivisionId: gfe.id,
+        passwordHash: defaultPwHash,
       },
       {
         email: "juan.driver@ecoroute.io",
@@ -138,6 +142,7 @@ async function seed() {
         phone: "+63-917-333-0003",
         isActive: true,
         subdivisionId: gfe.id,
+        passwordHash: defaultPwHash,
       },
       {
         email: "maria.driver@ecoroute.io",
@@ -146,6 +151,7 @@ async function seed() {
         phone: "+63-917-444-0004",
         isActive: true,
         subdivisionId: mph.id,
+        passwordHash: defaultPwHash,
       },
       {
         email: "jane.dispatcher@ecoroute.io",
@@ -154,6 +160,7 @@ async function seed() {
         phone: "+63-917-555-0005",
         isActive: false,
         subdivisionId: mph.id,
+        passwordHash: defaultPwHash,
       },
     ])
     .returning();
