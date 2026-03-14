@@ -54,8 +54,7 @@ interface ApiService {
     @GET("bins/{id}/telemetry")
     suspend fun getBinTelemetry(
         @Path("id") id: String,
-        @Query("page") page: Int = 1,
-        @Query("limit") limit: Int = 10,
+        @Query("limit") limit: Int = 50,
     ): Response<PaginatedResponse<BinTelemetry>>
 
     @POST("bins")
@@ -63,10 +62,10 @@ interface ApiService {
 
     // ── Telemetry ───────────────────────────────────────────────────
 
-    @GET("telemetry/latest")
+    @GET("telemetry")
     suspend fun getLatestTelemetry(
-        @Query("subdivisionId") subdivisionId: String? = null,
-    ): Response<ApiResponse<List<BinTelemetry>>>
+        @Query("limit") limit: Int = 200,
+    ): Response<PaginatedResponse<BinTelemetry>>
 
     // ── Alerts ──────────────────────────────────────────────────────
 

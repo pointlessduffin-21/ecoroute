@@ -86,7 +86,7 @@ class EcoRouteRepository @Inject constructor(
 
     suspend fun getLatestTelemetry(): Result<List<BinTelemetry>> {
         return try {
-            handleResponse(api.getLatestTelemetry())
+            handlePaginatedResponse(api.getLatestTelemetry())
         } catch (e: Exception) {
             Result.failure(e)
         }
