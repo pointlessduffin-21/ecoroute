@@ -27,12 +27,7 @@ def get_db_connection():
 
 
 def check_db_connection() -> bool:
-    """
-    Check if the database is reachable.
-
-    Returns:
-        True if connection succeeds, False otherwise.
-    """
+    """Check if the database is reachable."""
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -46,25 +41,19 @@ def check_db_connection() -> bool:
 def get_telemetry_for_device(device_id: str, limit: int = 100) -> list[dict]:
     """
     Fetch recent telemetry readings for a specific device.
-
-    Args:
-        device_id: The smart bin device identifier.
-        limit: Maximum number of records to return.
-
-    Returns:
-        List of telemetry records sorted by recorded_at ascending (oldest first).
+    device_id here is the smart_bin.id (UUID).
     """
     query = """
         SELECT
-            device_id,
-            fill_level_percent,
-            distance_cm,
-            battery_voltage,
-            signal_strength,
-            recorded_at
-        FROM telemetry_readings
-        WHERE device_id = %s
-        ORDER BY recorded_at DESC
+            bt.device_id,
+            bt.fill_level_percent,
+            bt.distance_cm,
+            bt.battery_voltage,
+            bt.signal_strength,
+            bt.recorded_at
+        FROM bin_telemetry bt
+        WHERE bt.device_id = %s
+        ORDER BY bt.recorded_at DESC
         LIMIT %s
     """
     try:
@@ -72,7 +61,6 @@ def get_telemetry_for_device(device_id: str, limit: int = 100) -> list[dict]:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, (device_id, limit))
                 rows = cur.fetchall()
-                # Reverse to get ascending order (oldest first)
                 records = [dict(row) for row in reversed(rows)]
                 logger.info(
                     "Fetched %d telemetry records for device %s", len(records), device_id
@@ -86,25 +74,17 @@ def get_telemetry_for_device(device_id: str, limit: int = 100) -> list[dict]:
 
 
 def get_all_telemetry(limit: int = 10000) -> list[dict]:
-    """
-    Fetch all telemetry readings across all devices for model training.
-
-    Args:
-        limit: Maximum total records to return.
-
-    Returns:
-        List of telemetry records sorted by recorded_at ascending.
-    """
+    """Fetch all telemetry readings across all devices for model training."""
     query = """
         SELECT
-            device_id,
-            fill_level_percent,
-            distance_cm,
-            battery_voltage,
-            signal_strength,
-            recorded_at
-        FROM telemetry_readings
-        ORDER BY recorded_at ASC
+            bt.device_id,
+            bt.fill_level_percent,
+            bt.distance_cm,
+            bt.battery_voltage,
+            bt.signal_strength,
+            bt.recorded_at
+        FROM bin_telemetry bt
+        ORDER BY bt.recorded_at ASC
         LIMIT %s
     """
     try:
@@ -121,32 +101,26 @@ def get_all_telemetry(limit: int = 10000) -> list[dict]:
 
 
 def get_all_bins() -> list[dict]:
-    """
-    Get all active smart bins with their latest telemetry reading.
-
-    Returns:
-        List of bin records with id, device_id, latitude, longitude,
-        capacity_liters, and latest telemetry fields.
-    """
+    """Get all active smart bins with their latest telemetry reading."""
     query = """
         SELECT DISTINCT ON (sb.id)
             sb.id,
-            sb.device_id,
-            sb.bin_name,
+            sb.id AS device_id,
+            sb.device_code,
             sb.latitude,
             sb.longitude,
             sb.capacity_liters,
             sb.subdivision_id,
             sb.status,
-            tr.fill_level_percent,
-            tr.distance_cm,
-            tr.battery_voltage,
-            tr.signal_strength,
-            tr.recorded_at
-        FROM smart_bins sb
-        LEFT JOIN telemetry_readings tr ON sb.device_id = tr.device_id
+            bt.fill_level_percent,
+            bt.distance_cm,
+            bt.battery_voltage,
+            bt.signal_strength,
+            bt.recorded_at
+        FROM smart_bin sb
+        LEFT JOIN bin_telemetry bt ON sb.id = bt.device_id
         WHERE sb.status = 'active'
-        ORDER BY sb.id, tr.recorded_at DESC
+        ORDER BY sb.id, bt.recorded_at DESC NULLS LAST
     """
     try:
         with get_db_connection() as conn:
@@ -164,31 +138,22 @@ def get_all_bins() -> list[dict]:
 def get_bins_above_threshold(
     threshold: float, subdivision_id: Optional[str] = None
 ) -> list[dict]:
-    """
-    Get bins whose latest fill level exceeds the given threshold.
-
-    Args:
-        threshold: Fill level percentage threshold.
-        subdivision_id: Optional subdivision filter.
-
-    Returns:
-        List of bin records that need collection.
-    """
+    """Get bins whose latest fill level exceeds the given threshold."""
     query = """
         SELECT DISTINCT ON (sb.id)
             sb.id,
-            sb.device_id,
-            sb.bin_name,
+            sb.id AS device_id,
+            sb.device_code,
             sb.latitude,
             sb.longitude,
             sb.capacity_liters,
             sb.subdivision_id,
-            tr.fill_level_percent,
-            tr.recorded_at
-        FROM smart_bins sb
-        INNER JOIN telemetry_readings tr ON sb.device_id = tr.device_id
+            bt.fill_level_percent,
+            bt.recorded_at
+        FROM smart_bin sb
+        INNER JOIN bin_telemetry bt ON sb.id = bt.device_id
         WHERE sb.status = 'active'
-          AND tr.fill_level_percent >= %s
+          AND bt.fill_level_percent >= %s
     """
     params: list = [threshold]
 
@@ -196,7 +161,7 @@ def get_bins_above_threshold(
         query += " AND sb.subdivision_id = %s"
         params.append(subdivision_id)
 
-    query += " ORDER BY sb.id, tr.recorded_at DESC"
+    query += " ORDER BY sb.id, bt.recorded_at DESC"
 
     try:
         with get_db_connection() as conn:
@@ -216,31 +181,20 @@ def get_bins_above_threshold(
 def get_bins_predicted_to_breach(
     threshold: float, subdivision_id: Optional[str] = None
 ) -> list[dict]:
-    """
-    Get bins whose predicted fill level will breach the threshold.
-
-    Uses the most recent prediction for each device.
-
-    Args:
-        threshold: Fill level percentage threshold.
-        subdivision_id: Optional subdivision filter.
-
-    Returns:
-        List of bin records predicted to exceed threshold.
-    """
+    """Get bins whose predicted fill level will breach the threshold."""
     query = """
         SELECT DISTINCT ON (sb.id)
             sb.id,
-            sb.device_id,
-            sb.bin_name,
+            sb.id AS device_id,
+            sb.device_code,
             sb.latitude,
             sb.longitude,
             sb.capacity_liters,
             sb.subdivision_id,
             fp.predicted_fill_percent AS fill_level_percent,
             fp.predicted_at AS recorded_at
-        FROM smart_bins sb
-        INNER JOIN fill_predictions fp ON sb.device_id = fp.device_id
+        FROM smart_bin sb
+        INNER JOIN fill_prediction fp ON sb.id = fp.device_id
         WHERE sb.status = 'active'
           AND fp.predicted_fill_percent >= %s
     """
@@ -276,21 +230,9 @@ def save_prediction(
     confidence: float,
     model_version: str,
 ) -> bool:
-    """
-    Save a fill level prediction to the database.
-
-    Args:
-        device_id: The smart bin device identifier.
-        predicted_fill: Predicted fill level percentage.
-        time_to_threshold: Estimated minutes until threshold is reached.
-        confidence: Confidence score (0.0-1.0).
-        model_version: Version identifier of the model that made the prediction.
-
-    Returns:
-        True if saved successfully, False otherwise.
-    """
+    """Save a fill level prediction to the database."""
     query = """
-        INSERT INTO fill_predictions (
+        INSERT INTO fill_prediction (
             device_id,
             predicted_fill_percent,
             time_to_threshold_minutes,
@@ -322,16 +264,7 @@ def save_prediction(
 
 
 def get_latest_predictions(device_id: str, limit: int = 10) -> list[dict]:
-    """
-    Get the most recent predictions for a device.
-
-    Args:
-        device_id: The smart bin device identifier.
-        limit: Maximum number of predictions to return.
-
-    Returns:
-        List of prediction records, newest first.
-    """
+    """Get the most recent predictions for a device."""
     query = """
         SELECT
             id,
@@ -341,7 +274,7 @@ def get_latest_predictions(device_id: str, limit: int = 10) -> list[dict]:
             confidence_score,
             model_version,
             predicted_at
-        FROM fill_predictions
+        FROM fill_prediction
         WHERE device_id = %s
         ORDER BY predicted_at DESC
         LIMIT %s

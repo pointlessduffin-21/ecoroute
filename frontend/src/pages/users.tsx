@@ -32,7 +32,7 @@ import {
   Pencil,
 } from "lucide-react";
 
-const ROLE_OPTIONS = ["all", "admin", "dispatcher", "driver"] as const;
+const ROLE_OPTIONS = ["all", "admin", "dispatcher", "maintenance"] as const;
 
 type RoleFilter = (typeof ROLE_OPTIONS)[number];
 
@@ -44,8 +44,6 @@ const roleBadgeVariant = (role: User["role"]) => {
       return "info" as const;
     case "maintenance":
       return "warning" as const;
-    case "driver":
-      return "secondary" as const;
   }
 };
 
@@ -56,8 +54,6 @@ const roleIcon = (role: User["role"]) => {
     case "dispatcher":
       return <Radio className="mr-1 h-3 w-3" />;
     case "maintenance":
-      return <Truck className="mr-1 h-3 w-3" />;
-    case "driver":
       return <Truck className="mr-1 h-3 w-3" />;
   }
 };
@@ -88,13 +84,13 @@ export function UsersPage() {
   const [addForm, setAddForm] = useState<AddFormData>({
     fullName: "",
     email: "",
-    role: "driver",
+    role: "maintenance",
     password: "",
   });
   const [editForm, setEditForm] = useState<EditFormData>({
     fullName: "",
     email: "",
-    role: "driver",
+    role: "maintenance",
     phone: "",
     isActive: true,
   });
@@ -145,8 +141,8 @@ export function UsersPage() {
   const closeModal = () => {
     setModalMode(null);
     setEditingUserId(null);
-    setAddForm({ fullName: "", email: "", role: "driver", password: "" });
-    setEditForm({ fullName: "", email: "", role: "driver", phone: "", isActive: true });
+    setAddForm({ fullName: "", email: "", role: "maintenance", password: "" });
+    setEditForm({ fullName: "", email: "", role: "maintenance", phone: "", isActive: true });
   };
 
   const openAddModal = () => {
@@ -237,12 +233,12 @@ export function UsersPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Drivers</CardDescription>
-            <Truck className="h-4 w-4 text-gray-600" />
+            <CardDescription>Maintenance</CardDescription>
+            <Truck className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {users.filter((u) => u.role === "driver").length}
+              {users.filter((u) => u.role === "maintenance").length}
             </div>
           </CardContent>
         </Card>

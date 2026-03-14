@@ -4,7 +4,7 @@ export interface AppUser {
   id: string;
   email: string;
   fullName: string;
-  role: "admin" | "dispatcher" | "driver";
+  role: "admin" | "dispatcher" | "maintenance";
   subdivisionId: string | null;
 }
 

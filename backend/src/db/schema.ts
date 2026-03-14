@@ -20,7 +20,6 @@ import { relations, sql } from "drizzle-orm";
 export const userRoleEnum = pgEnum("user_role", [
   "admin",
   "dispatcher",
-  "driver",
   "maintenance",
 ]);
 
@@ -99,7 +98,7 @@ export const users = pgTable(
     subdivisionId: uuid("subdivision_id").references(() => subdivisions.id),
     email: varchar("email", { length: 255 }).notNull().unique(),
     fullName: varchar("full_name", { length: 255 }).notNull(),
-    role: userRoleEnum("role").notNull().default("driver"),
+    role: userRoleEnum("role").notNull().default("maintenance"),
     phone: varchar("phone", { length: 50 }),
     avatarUrl: text("avatar_url"),
     passwordHash: text("password_hash"),
@@ -363,7 +362,31 @@ export const notifications = pgTable(
   ]
 );
 
-// ─── 12. System Config ────────────────────────────────────────────────────────
+// ─── 12. Cached AI Insights ──────────────────────────────────────────────────
+
+export const cachedInsights = pgTable(
+  "cached_insight",
+  {
+    id: serial("id").primaryKey(),
+    subdivisionId: uuid("subdivision_id").references(() => subdivisions.id),
+    insightType: varchar("insight_type", { length: 50 }).notNull(),
+    insight: text("insight").notNull(),
+    provider: varchar("provider", { length: 50 }).notNull(),
+    model: varchar("model", { length: 100 }).notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_cached_insight_type").on(table.insightType),
+    index("idx_cached_insight_subdivision").on(
+      table.subdivisionId,
+      table.insightType
+    ),
+  ]
+);
+
+// ─── 13. System Config ────────────────────────────────────────────────────────
 
 export const systemConfig = pgTable(
   "system_config",

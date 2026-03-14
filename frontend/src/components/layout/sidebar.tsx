@@ -19,14 +19,14 @@ interface NavItem {
   icon: React.ElementType;
   label: string;
   adminOnly?: boolean;
-  driverOnly?: boolean;
+  maintenanceOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/bins", icon: Trash2, label: "Smart Bins" },
   { to: "/routes", icon: Route, label: "Routes" },
-  { to: "/my-routes", icon: Truck, label: "My Routes", driverOnly: true },
+  { to: "/my-routes", icon: Truck, label: "My Routes", maintenanceOnly: true },
   { to: "/alerts", icon: Bell, label: "Alerts" },
   { to: "/users", icon: Users, label: "Users", adminOnly: true },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
@@ -35,7 +35,7 @@ const navItems: NavItem[] = [
 ];
 
 export function Sidebar() {
-  const { user, logout, isAdmin, isDriver } = useAuth();
+  const { user, logout, isAdmin, isMaintenance } = useAuth();
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-border bg-sidebar">
@@ -50,7 +50,7 @@ export function Sidebar() {
         {navItems
           .filter((item) => {
             if (item.adminOnly && !isAdmin) return false;
-            if (item.driverOnly && !isDriver) return false;
+            if (item.maintenanceOnly && !isMaintenance) return false;
             return true;
           })
           .map((item) => (

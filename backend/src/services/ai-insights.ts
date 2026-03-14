@@ -208,7 +208,7 @@ async function fetchStaffingData(subdivisionId?: string) {
     LEFT JOIN collection_route cr ON cr.assigned_driver_id = u.id
       AND cr.created_at >= NOW() - INTERVAL '30 days'
       ${sql.raw(subdivisionId ? `AND cr.subdivision_id = '${subdivisionId}'` : "")}
-    WHERE u.role = 'driver' AND u.is_active = true
+    WHERE u.role = 'maintenance' AND u.is_active = true
     GROUP BY u.id, u.full_name
     ORDER BY completed_routes DESC
   `);
@@ -303,8 +303,8 @@ function buildUserPrompt(type: InsightRequest["type"], data: unknown): string {
       "suggest optimal collection scheduling to prevent overflows, " +
       "and recommend how to balance the workload across the week.",
     staffing:
-      "Analyze the driver performance and route completion data. " +
-      "Identify top-performing and underperforming drivers, suggest staffing adjustments, " +
+      "Analyze the maintenance staff performance and route completion data. " +
+      "Identify top-performing and underperforming maintenance personnel, suggest staffing adjustments, " +
       "and recommend training or process improvements to boost overall completion rates.",
     efficiency:
       "Analyze the route efficiency and collection frequency data. " +

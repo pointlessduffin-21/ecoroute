@@ -17,7 +17,7 @@ interface AuthContextType {
   logout: () => void;
   isAdmin: boolean;
   isDispatcher: boolean;
-  isDriver: boolean;
+  isMaintenance: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         isAdmin: user?.role === "admin",
         isDispatcher: user?.role === "dispatcher",
-        isDriver: user?.role === "driver",
+        isMaintenance: user?.role === "maintenance",
       }}
     >
       {children}

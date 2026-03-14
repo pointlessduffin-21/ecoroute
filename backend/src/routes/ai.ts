@@ -1,8 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { eq, and, isNull, desc, gte, sql } from "drizzle-orm";
 import { generateInsight } from "../services/ai-insights";
 import { env } from "../config/env";
 import { requireRole } from "../middleware/rbac";
+import { getDb } from "../config/database";
+import { cachedInsights, fillPredictions, smartBins } from "../db/schema";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -38,7 +41,34 @@ const optimizeRouteSchema = z.object({
   thresholdPercent: z.number().min(0).max(100).default(70),
 });
 
-// ─── POST /insights — Generate AI insight ────────────────────────────────────
+// ─── GET /insights — Get all cached insights ────────────────────────────────
+
+app.get("/insights", async (c) => {
+  const subdivisionId = c.req.query("subdivisionId");
+  const db = getDb();
+
+  const condition = subdivisionId
+    ? eq(cachedInsights.subdivisionId, subdivisionId)
+    : isNull(cachedInsights.subdivisionId);
+
+  const rows = await db
+    .select()
+    .from(cachedInsights)
+    .where(condition)
+    .orderBy(desc(cachedInsights.generatedAt));
+
+  // Return latest per type
+  const byType: Record<string, typeof rows[0]> = {};
+  for (const row of rows) {
+    if (!byType[row.insightType]) {
+      byType[row.insightType] = row;
+    }
+  }
+
+  return c.json({ data: byType });
+});
+
+// ─── POST /insights — Generate AI insight and cache it ──────────────────────
 
 app.post("/insights", async (c) => {
   const body = await c.req.json();
@@ -53,6 +83,18 @@ app.post("/insights", async (c) => {
 
   try {
     const result = await generateInsight(parsed.data);
+
+    // Cache the result
+    const db = getDb();
+    await db.insert(cachedInsights).values({
+      subdivisionId: parsed.data.subdivisionId ?? null,
+      insightType: parsed.data.type,
+      insight: result.insight,
+      provider: result.provider,
+      model: result.model,
+      generatedAt: new Date(result.generatedAt),
+    });
+
     return c.json({ data: result });
   } catch (err) {
     const message =
@@ -60,6 +102,50 @@ app.post("/insights", async (c) => {
     console.error("[ai-insights] Error:", message);
     return c.json({ error: message }, 500);
   }
+});
+
+// ─── GET /predictions — Get latest cached predictions ────────────────────────
+
+app.get("/predictions", async (c) => {
+  const db = getDb();
+
+  // Get the most recent prediction timestamp
+  const latest = await db
+    .select({ predictedAt: fillPredictions.predictedAt })
+    .from(fillPredictions)
+    .orderBy(desc(fillPredictions.predictedAt))
+    .limit(1);
+
+  if (latest.length === 0) {
+    return c.json({ data: { predictions: [], generatedAt: null } });
+  }
+
+  const latestTime = latest[0]!.predictedAt;
+  // Get all predictions from the same batch (within 1 minute of the latest)
+  const batchStart = new Date(latestTime.getTime() - 60_000);
+
+  const rows = await db
+    .select({
+      id: fillPredictions.id,
+      deviceId: fillPredictions.deviceId,
+      deviceCode: smartBins.deviceCode,
+      predictedFillPercent: fillPredictions.predictedFillPercent,
+      timeToThresholdMinutes: fillPredictions.timeToThresholdMinutes,
+      confidenceScore: fillPredictions.confidenceScore,
+      modelVersion: fillPredictions.modelVersion,
+      predictedAt: fillPredictions.predictedAt,
+    })
+    .from(fillPredictions)
+    .leftJoin(smartBins, eq(fillPredictions.deviceId, smartBins.id))
+    .where(gte(fillPredictions.predictedAt, batchStart))
+    .orderBy(desc(fillPredictions.predictedFillPercent));
+
+  return c.json({
+    data: {
+      predictions: rows,
+      generatedAt: latestTime.toISOString(),
+    },
+  });
 });
 
 // ─── POST /predict — Proxy to Python AI service for LSTM prediction ─────────
@@ -132,8 +218,58 @@ app.post("/predict/all", async (c) => {
       );
     }
 
-    const data = await response.json();
-    return c.json({ data });
+    const aiData = (await response.json()) as {
+      predictions: Array<{
+        device_id: string;
+        predicted_fill_percent: number;
+        time_to_threshold_minutes: number;
+        confidence_score: number;
+        model_version: string;
+        predicted_at: string;
+      }>;
+      total: number;
+      errors: number;
+    };
+
+    // Read back from DB to get device_code and proper IDs
+    if (aiData.predictions.length > 0) {
+      const db = getDb();
+      const latest = await db
+        .select({ predictedAt: fillPredictions.predictedAt })
+        .from(fillPredictions)
+        .orderBy(desc(fillPredictions.predictedAt))
+        .limit(1);
+
+      if (latest.length > 0) {
+        const latestTime = latest[0]!.predictedAt;
+        const batchStart = new Date(latestTime.getTime() - 60_000);
+
+        const rows = await db
+          .select({
+            id: fillPredictions.id,
+            deviceId: fillPredictions.deviceId,
+            deviceCode: smartBins.deviceCode,
+            predictedFillPercent: fillPredictions.predictedFillPercent,
+            timeToThresholdMinutes: fillPredictions.timeToThresholdMinutes,
+            confidenceScore: fillPredictions.confidenceScore,
+            modelVersion: fillPredictions.modelVersion,
+            predictedAt: fillPredictions.predictedAt,
+          })
+          .from(fillPredictions)
+          .leftJoin(smartBins, eq(fillPredictions.deviceId, smartBins.id))
+          .where(gte(fillPredictions.predictedAt, batchStart))
+          .orderBy(desc(fillPredictions.predictedFillPercent));
+
+        return c.json({
+          data: {
+            predictions: rows,
+            generatedAt: latestTime.toISOString(),
+          },
+        });
+      }
+    }
+
+    return c.json({ data: aiData });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to reach AI service";

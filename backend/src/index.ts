@@ -34,10 +34,14 @@ const app = new Hono<{ Variables: AppVariables }>();
 
 app.use("*", logger());
 app.use("*", prettyJSON());
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
+  : ["http://localhost:5173", "http://localhost:3001", "http://localhost", "http://localhost:80"];
+
 app.use(
   "*",
   cors({
-    origin: ["http://localhost:5173", "http://localhost:3001", "http://localhost", "http://localhost:80"],
+    origin: corsOrigins,
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization", "X-Device-API-Key"],
     credentials: true,

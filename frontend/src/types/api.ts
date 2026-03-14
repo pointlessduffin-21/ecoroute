@@ -16,7 +16,7 @@ export interface User {
   subdivisionId: string | null;
   email: string;
   fullName: string;
-  role: "admin" | "dispatcher" | "driver" | "maintenance";
+  role: "admin" | "dispatcher" | "maintenance";
   phone: string | null;
   avatarUrl: string | null;
   isActive: boolean;
@@ -170,6 +170,7 @@ export interface DriverPerformanceEntry {
 export interface FillPrediction {
   id: number;
   deviceId: string;
+  deviceCode?: string;
   predictedFillPercent: number;
   timeToThresholdMinutes: number;
   confidenceScore: number;

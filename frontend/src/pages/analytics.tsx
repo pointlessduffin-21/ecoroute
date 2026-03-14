@@ -232,20 +232,64 @@ function thresholdBg(minutes: number): string {
   return "bg-green-50 border-green-200";
 }
 
+// ---------------------------------------------------------------------------
+// Helper: format timestamp
+// ---------------------------------------------------------------------------
+
+function formatUpdatedAt(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 export function AnalyticsPage() {
   // ---- AI Insights state ----
   const [insights, setInsights] = useState<Record<string, AIInsight | null>>({});
   const [insightErrors, setInsightErrors] = useState<Record<string, string>>({});
   const [insightsLoading, setInsightsLoading] = useState<Record<string, boolean>>({});
+  const [insightsRefreshing, setInsightsRefreshing] = useState(false);
 
-  // Auto-run all insight types on mount
+  // Load cached insights on mount
   useEffect(() => {
+    api
+      .get<{ data: Record<string, { insightType: string; insight: string; provider: string; model: string; generatedAt: string }> }>("/ai/insights")
+      .then((res) => {
+        const cached = res.data.data;
+        const mapped: Record<string, AIInsight> = {};
+        for (const [type, row] of Object.entries(cached)) {
+          mapped[type] = {
+            insight: row.insight,
+            provider: row.provider,
+            model: row.model,
+            generatedAt: row.generatedAt,
+          };
+        }
+        if (Object.keys(mapped).length > 0) {
+          setInsights(mapped);
+        }
+      })
+      .catch(() => {
+        // No cached insights — that's fine
+      });
+  }, []);
+
+  // Refresh all insights (regenerate via AI)
+  const refreshAllInsights = () => {
+    setInsightsRefreshing(true);
+    setInsightErrors({});
+    let completed = 0;
     for (const item of INSIGHT_TYPES) {
       setInsightsLoading((prev) => ({ ...prev, [item.type]: true }));
       api
-        .post<AIInsight>("/ai/insights", { type: item.type })
+        .post<{ data: AIInsight }>("/ai/insights", { type: item.type })
         .then((res) => {
-          setInsights((prev) => ({ ...prev, [item.type]: res.data }));
+          setInsights((prev) => ({ ...prev, [item.type]: res.data.data }));
         })
         .catch((error: unknown) => {
           const errData = (error as { response?: { data?: { error?: string } } })?.response?.data;
@@ -256,22 +300,50 @@ export function AnalyticsPage() {
         })
         .finally(() => {
           setInsightsLoading((prev) => ({ ...prev, [item.type]: false }));
+          completed++;
+          if (completed === INSIGHT_TYPES.length) {
+            setInsightsRefreshing(false);
+          }
         });
     }
-  }, []);
+  };
+
+  // Get the latest generatedAt across all insights
+  const latestInsightTime = Object.values(insights)
+    .filter(Boolean)
+    .map((i) => i!.generatedAt)
+    .sort()
+    .pop();
 
   // ---- Predictions state ----
   const [predictions, setPredictions] = useState<FillPrediction[]>([]);
   const [predictionsError, setPredictionsError] = useState<string | null>(null);
+  const [predictionsGeneratedAt, setPredictionsGeneratedAt] = useState<string | null>(null);
+
+  // Load cached predictions on mount
+  useEffect(() => {
+    api
+      .get<{ data: { predictions: FillPrediction[]; generatedAt: string | null } }>("/ai/predictions")
+      .then((res) => {
+        const { predictions: cached, generatedAt } = res.data.data;
+        if (cached.length > 0) {
+          setPredictions(cached);
+          setPredictionsGeneratedAt(generatedAt);
+        }
+      })
+      .catch(() => {
+        // No cached predictions
+      });
+  }, []);
 
   const predictionMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post("/ai/predict/all");
-      return res.data;
+      const res = await api.post<{ data: { predictions: FillPrediction[]; generatedAt: string } }>("/ai/predict/all");
+      return res.data.data;
     },
     onSuccess: (data) => {
-      const items = Array.isArray(data) ? data : data?.predictions ?? data?.data ?? [];
-      setPredictions(items);
+      setPredictions(data.predictions ?? []);
+      setPredictionsGeneratedAt(data.generatedAt ?? new Date().toISOString());
       setPredictionsError(null);
     },
     onError: (error: unknown) => {
@@ -402,13 +474,40 @@ export function AnalyticsPage() {
       {/* ---- AI Insights Panel ---- */}
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-purple-500" />
-            <div>
-              <CardTitle className="text-base">AI Insights</CardTitle>
-              <CardDescription>
-                AI-powered analysis of your waste collection data
-              </CardDescription>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-purple-500" />
+              <div>
+                <CardTitle className="text-base">AI Insights</CardTitle>
+                <CardDescription>
+                  AI-powered analysis of your waste collection data
+                </CardDescription>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              {latestInsightTime && (
+                <span className="text-xs text-muted-foreground">
+                  Updated as of {formatUpdatedAt(latestInsightTime)}
+                </span>
+              )}
+              <Button
+                onClick={refreshAllInsights}
+                disabled={insightsRefreshing}
+                size="sm"
+                variant="outline"
+              >
+                {insightsRefreshing ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Refreshing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Refresh
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -446,7 +545,7 @@ export function AnalyticsPage() {
 
                   {result && !loading && !error && (
                     <div className="text-xs text-foreground/80 max-h-40 overflow-y-auto space-y-1">
-                      {result.insight.split("\n").map((line, i) => {
+                      {(result.insight ?? "").split("\n").map((line, i) => {
                         if (!line.trim()) return null;
                         if (line.trim().startsWith("**") || line.trim().startsWith("##")) {
                           return (
@@ -490,23 +589,31 @@ export function AnalyticsPage() {
                 </CardDescription>
               </div>
             </div>
-            <Button
-              onClick={() => predictionMutation.mutate()}
-              disabled={predictionMutation.isPending}
-              size="sm"
-            >
-              {predictionMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  Running...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                  Run Predictions
-                </>
+            <div className="flex items-center gap-3">
+              {predictionsGeneratedAt && (
+                <span className="text-xs text-muted-foreground">
+                  Updated as of {formatUpdatedAt(predictionsGeneratedAt)}
+                </span>
               )}
-            </Button>
+              <Button
+                onClick={() => predictionMutation.mutate()}
+                disabled={predictionMutation.isPending}
+                size="sm"
+                variant="outline"
+              >
+                {predictionMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Running...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Refresh
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -547,7 +654,7 @@ export function AnalyticsPage() {
                   {predictions.map((pred) => (
                     <tr key={pred.id} className="group">
                       <td className="py-3 pr-4">
-                        <span className="font-mono text-xs">{pred.deviceId}</span>
+                        <span className="font-mono text-xs">{pred.deviceCode ?? pred.deviceId}</span>
                       </td>
                       <td className="py-3 pr-4 text-right">
                         <span className="font-medium">
@@ -589,7 +696,7 @@ export function AnalyticsPage() {
           {/* Empty state */}
           {predictions.length === 0 && !predictionMutation.isPending && !predictionsError && (
             <div className="flex items-center justify-center py-6 text-muted-foreground">
-              <p className="text-sm">Click "Run Predictions" to generate fill level forecasts.</p>
+              <p className="text-sm">No predictions yet. Click "Refresh" to generate fill level forecasts.</p>
             </div>
           )}
         </CardContent>
@@ -764,7 +871,7 @@ export function AnalyticsPage() {
                         <td className="py-3 pr-4">
                           <div className="flex items-center gap-3">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">
-                              {driver.driver_name
+                              {(driver.driver_name ?? "?")
                                 .split(" ")
                                 .map((n) => n[0])
                                 .join("")}

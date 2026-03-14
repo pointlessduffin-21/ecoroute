@@ -224,7 +224,7 @@ app.get("/driver-performance", async (c) => {
       ) AS service_events_count
     FROM "user" u
     JOIN collection_route cr ON cr.assigned_driver_id = u.id
-    WHERE u.role = 'driver'
+    WHERE u.role = 'maintenance'
       AND u.is_active = true
       AND cr.created_at >= NOW() - (${days} || ' days')::interval
       ${subdivisionFilter}

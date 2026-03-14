@@ -158,11 +158,11 @@ export function RoutesPage() {
     return [];
   }
 
-  // Fetch drivers for display names
+  // Fetch maintenance staff for display names
   const { data: driversResponse } = useQuery({
-    queryKey: ["drivers"],
+    queryKey: ["maintenance-staff"],
     queryFn: async () => {
-      const res = await api.get<PaginatedResponse<User>>("/users", { params: { role: "driver" } });
+      const res = await api.get<PaginatedResponse<User>>("/users", { params: { role: "maintenance" } });
       return res.data;
     },
   });

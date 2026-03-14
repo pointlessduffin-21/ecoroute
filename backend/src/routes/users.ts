@@ -18,7 +18,7 @@ app.use("/*", requireRole("admin"));
 const createUserSchema = z.object({
   email: z.string().email().max(255),
   fullName: z.string().min(1).max(255),
-  role: z.enum(["admin", "dispatcher", "driver", "maintenance"]).default("driver"),
+  role: z.enum(["admin", "dispatcher", "maintenance"]).default("maintenance"),
   phone: z.string().max(50).optional(),
   avatarUrl: z.string().url().optional(),
   subdivisionId: z.string().uuid().optional(),
@@ -27,7 +27,7 @@ const createUserSchema = z.object({
 
 const updateUserSchema = z.object({
   fullName: z.string().min(1).max(255).optional(),
-  role: z.enum(["admin", "dispatcher", "driver", "maintenance"]).optional(),
+  role: z.enum(["admin", "dispatcher", "maintenance"]).optional(),
   phone: z.string().max(50).optional(),
   avatarUrl: z.string().url().optional(),
   subdivisionId: z.string().uuid().nullable().optional(),
@@ -40,7 +40,7 @@ app.get("/", async (c) => {
   const limit = Math.min(Number(c.req.query("limit") || "20"), 100);
   const offset = Number(c.req.query("offset") || "0");
   const subdivisionId = c.req.query("subdivisionId");
-  const role = c.req.query("role") as "admin" | "dispatcher" | "driver" | undefined;
+  const role = c.req.query("role") as "admin" | "dispatcher" | "maintenance" | undefined;
 
   const db = getDb();
 

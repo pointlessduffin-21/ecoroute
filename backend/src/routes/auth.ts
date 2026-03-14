@@ -126,9 +126,11 @@ app.post("/login", async (c) => {
 
     const accessToken = signLocalJwt(user.id, user.email);
 
+    const { passwordHash: _, ...safeUser } = user;
+
     return c.json({
       data: {
-        user,
+        user: safeUser,
         session: {
           accessToken,
           refreshToken: null,
@@ -177,7 +179,7 @@ app.post("/register", async (c) => {
         phone: parsed.data.phone,
         subdivisionId: parsed.data.subdivisionId,
         supabaseUid: authData.user.id,
-        role: "driver",
+        role: "maintenance",
       })
       .returning();
 
@@ -224,7 +226,7 @@ app.post("/register", async (c) => {
         phone: parsed.data.phone,
         subdivisionId: parsed.data.subdivisionId,
         passwordHash: pwHash,
-        role: "driver",
+        role: "maintenance",
       })
       .returning();
 

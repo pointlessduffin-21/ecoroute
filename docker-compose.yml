@@ -52,6 +52,7 @@ services:
       DEVICE_API_KEY: ${DEVICE_API_KEY:-ecoroute-device-key-change-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       AI_SERVICE_URL: http://ai-service:8000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3001,http://localhost,http://localhost:80}
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
     depends_on:
