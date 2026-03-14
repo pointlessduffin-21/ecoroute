@@ -42,7 +42,7 @@ export function SettingsPage() {
   const saveConfigMutation = useMutation({
     mutationFn: async (configs: { key: string; value: string }[]) => {
       await Promise.all(
-        configs.map(cfg => api.put("/system-config", { configKey: cfg.key, configValue: cfg.value }))
+        configs.map(cfg => api.put(`/system-config/${cfg.key}`, { configValue: cfg.value }))
       );
     },
     onSuccess: () => {
