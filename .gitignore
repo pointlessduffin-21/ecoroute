@@ -27,3 +27,6 @@ mobile/local.properties
 Thumbs.db
 venv/
 ai-service/venv/
+
+# Git worktrees
+.worktrees/
