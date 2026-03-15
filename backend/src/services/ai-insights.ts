@@ -1,4 +1,4 @@
-import { eq, and, sql, gte, desc } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getDb } from "../config/database";
 import {
   systemConfig,
@@ -27,10 +27,11 @@ export interface InsightResponse {
 }
 
 interface AIConfig {
-  provider: "gemini" | "openrouter" | "ollama";
+  provider: "gemini" | "openrouter" | "ollama" | "openai";
   apiKey: string;
   model: string;
   ollamaUrl?: string;
+  openaiBaseUrl?: string;
 }
 
 // ─── Config helpers ──────────────────────────────────────────────────────────
@@ -45,8 +46,9 @@ async function getAIConfig(): Promise<AIConfig> {
     })
     .from(systemConfig)
     .where(
-      sql`${systemConfig.configKey} IN ('ai_provider', 'ai_api_key', 'ai_model', 'ai_ollama_url')
-          AND ${systemConfig.subdivisionId} IS NULL`
+      sql`${systemConfig.configKey} IN (
+        'ai_provider', 'ai_api_key', 'ai_model', 'ai_ollama_url', 'ai_openai_base_url'
+      ) AND ${systemConfig.subdivisionId} IS NULL`
     );
 
   const configMap: Record<string, string> = {};
@@ -54,17 +56,20 @@ async function getAIConfig(): Promise<AIConfig> {
     configMap[row.key] = row.value;
   }
 
-  const provider = (configMap["ai_provider"] as "gemini" | "openrouter" | "ollama") || "gemini";
+  const provider =
+    (configMap["ai_provider"] as AIConfig["provider"]) || "gemini";
   const apiKey = configMap["ai_api_key"] || "";
   const ollamaUrl = configMap["ai_ollama_url"] || "http://localhost:11434";
+  const openaiBaseUrl =
+    configMap["ai_openai_base_url"] || "https://api.openai.com/v1";
 
-  const defaultModel =
-    provider === "gemini"
-      ? "gemini-2.0-flash"
-      : provider === "ollama"
-        ? "llama3.2"
-        : "google/gemini-2.0-flash-001";
-  const model = configMap["ai_model"] || defaultModel;
+  const defaultModel: Record<AIConfig["provider"], string> = {
+    gemini: "gemini-2.0-flash",
+    ollama: "llama3.2",
+    openrouter: "google/gemini-2.0-flash-001",
+    openai: "gpt-4o-mini",
+  };
+  const model = configMap["ai_model"] || defaultModel[provider];
 
   if (provider !== "ollama" && !apiKey) {
     throw new Error(
@@ -72,7 +77,7 @@ async function getAIConfig(): Promise<AIConfig> {
     );
   }
 
-  return { provider, apiKey, model, ollamaUrl };
+  return { provider, apiKey, model, ollamaUrl, openaiBaseUrl };
 }
 
 // ─── Data fetchers ───────────────────────────────────────────────────────────
@@ -80,32 +85,25 @@ async function getAIConfig(): Promise<AIConfig> {
 async function fetchGeneralData(subdivisionId?: string) {
   const db = getDb();
 
-  const subdivisionFilter = subdivisionId
-    ? sql`AND subdivision_id = ${subdivisionId}`
-    : sql``;
-  const subdivisionJoinFilter = subdivisionId
-    ? sql`AND sb.subdivision_id = ${subdivisionId}`
-    : sql``;
+  const sdFilter = subdivisionId ? `AND subdivision_id = '${subdivisionId}'` : "";
+  const sdBinFilter = subdivisionId ? `AND sb.subdivision_id = '${subdivisionId}'` : "";
 
   const [dashboardStats, recentAlerts, fillLevels] = await Promise.all([
-    // Dashboard KPIs
     db.execute(sql`
       SELECT
-        (SELECT COUNT(*)::int FROM smart_bin WHERE status = 'active' ${sql.raw(subdivisionId ? `AND subdivision_id = '${subdivisionId}'` : "")}) AS active_bins,
-        (SELECT COUNT(*)::int FROM alert WHERE alert_type = 'overflow' AND is_acknowledged = false AND created_at >= NOW() - INTERVAL '24 hours' ${sql.raw(subdivisionId ? `AND subdivision_id = '${subdivisionId}'` : "")}) AS overflow_alerts_24h,
-        (SELECT COUNT(*)::int FROM collection_route WHERE status = 'completed' AND completed_at >= CURRENT_DATE ${sql.raw(subdivisionId ? `AND subdivision_id = '${subdivisionId}'` : "")}) AS completed_routes_today,
-        (SELECT COUNT(*)::int FROM collection_route WHERE status = 'in_progress' ${sql.raw(subdivisionId ? `AND subdivision_id = '${subdivisionId}'` : "")}) AS routes_in_progress
+        (SELECT COUNT(*)::int FROM smart_bin WHERE status = 'active' ${sql.raw(sdFilter)}) AS active_bins,
+        (SELECT COUNT(*)::int FROM alert WHERE alert_type = 'overflow' AND is_acknowledged = false AND created_at >= NOW() - INTERVAL '24 hours' ${sql.raw(sdFilter)}) AS overflow_alerts_24h,
+        (SELECT COUNT(*)::int FROM collection_route WHERE status = 'completed' AND completed_at >= CURRENT_DATE ${sql.raw(sdFilter)}) AS completed_routes_today,
+        (SELECT COUNT(*)::int FROM collection_route WHERE status = 'in_progress' ${sql.raw(sdFilter)}) AS routes_in_progress
     `),
-    // Recent alerts (last 7 days)
     db.execute(sql`
       SELECT alert_type, severity, message, created_at
       FROM alert
       WHERE created_at >= NOW() - INTERVAL '7 days'
-        ${sql.raw(subdivisionId ? `AND subdivision_id = '${subdivisionId}'` : "")}
+        ${sql.raw(sdFilter)}
       ORDER BY created_at DESC
       LIMIT 20
     `),
-    // Current fill levels
     db.execute(sql`
       SELECT
         sb.device_code,
@@ -123,7 +121,7 @@ async function fetchGeneralData(subdivisionId?: string) {
         LIMIT 1
       ) latest ON true
       WHERE sb.status = 'active'
-        ${sql.raw(subdivisionId ? `AND sb.subdivision_id = '${subdivisionId}'` : "")}
+        ${sql.raw(sdBinFilter)}
       ORDER BY latest.fill_level_percent DESC NULLS LAST
       LIMIT 50
     `),
@@ -220,7 +218,6 @@ async function fetchEfficiencyData(subdivisionId?: string) {
   const db = getDb();
 
   const [routeStats, collectionFrequency] = await Promise.all([
-    // Route efficiency metrics
     db.execute(sql`
       SELECT
         COUNT(*)::int AS total_routes,
@@ -249,7 +246,6 @@ async function fetchEfficiencyData(subdivisionId?: string) {
       WHERE cr.created_at >= NOW() - INTERVAL '30 days'
         ${sql.raw(subdivisionId ? `AND cr.subdivision_id = '${subdivisionId}'` : "")}
     `),
-    // Collection frequency per bin
     db.execute(sql`
       SELECT
         sb.device_code,
@@ -281,60 +277,70 @@ async function fetchEfficiencyData(subdivisionId?: string) {
 
 // ─── Prompt builders ─────────────────────────────────────────────────────────
 
+// The system prompt is kept static so providers can cache it as a prefix.
+// It is sent as the "system" role (or systemInstruction for Gemini) — separate
+// from the dynamic user data — so the static tokens only count once per cache hit.
 const SYSTEM_PROMPT =
   "You are an AI analyst for EcoRoute, a smart waste management system for residential subdivisions in the Philippines. " +
   "Analyze the provided operational data and give actionable, concise insights. " +
   "Use bullet points. Be specific with numbers and percentages. " +
   "Focus on practical recommendations that waste management operators can act on immediately.";
 
+const TYPE_INSTRUCTIONS: Record<InsightRequest["type"], string> = {
+  general:
+    "Provide a general operational overview based on the dashboard statistics, recent alerts, and current fill levels. " +
+    "Highlight any concerning trends, bins that need immediate attention, and overall system health.",
+  hotspots:
+    "Analyze the overflow hotspot data. Identify which bins are repeatedly overflowing, " +
+    "suggest potential causes (e.g., undersized bins, high foot traffic areas, scheduling gaps), " +
+    "and recommend specific actions to reduce overflow incidents.",
+  peak_days:
+    "Analyze the telemetry data aggregated by day of week. Identify which days have the highest fill rates, " +
+    "suggest optimal collection scheduling to prevent overflows, " +
+    "and recommend how to balance the workload across the week.",
+  staffing:
+    "Analyze the maintenance staff performance and route completion data. " +
+    "Identify top-performing and underperforming maintenance personnel, suggest staffing adjustments, " +
+    "and recommend training or process improvements to boost overall completion rates.",
+  efficiency:
+    "Analyze the route efficiency and collection frequency data. " +
+    "Identify routes that could be optimized, bins that are being over- or under-serviced, " +
+    "and recommend specific changes to improve fuel efficiency and reduce operational costs.",
+};
+
 function buildUserPrompt(type: InsightRequest["type"], data: unknown): string {
   const dataJson = JSON.stringify(data, null, 2);
-
-  const typeInstructions: Record<InsightRequest["type"], string> = {
-    general:
-      "Provide a general operational overview based on the dashboard statistics, recent alerts, and current fill levels. " +
-      "Highlight any concerning trends, bins that need immediate attention, and overall system health.",
-    hotspots:
-      "Analyze the overflow hotspot data. Identify which bins are repeatedly overflowing, " +
-      "suggest potential causes (e.g., undersized bins, high foot traffic areas, scheduling gaps), " +
-      "and recommend specific actions to reduce overflow incidents.",
-    peak_days:
-      "Analyze the telemetry data aggregated by day of week. Identify which days have the highest fill rates, " +
-      "suggest optimal collection scheduling to prevent overflows, " +
-      "and recommend how to balance the workload across the week.",
-    staffing:
-      "Analyze the maintenance staff performance and route completion data. " +
-      "Identify top-performing and underperforming maintenance personnel, suggest staffing adjustments, " +
-      "and recommend training or process improvements to boost overall completion rates.",
-    efficiency:
-      "Analyze the route efficiency and collection frequency data. " +
-      "Identify routes that could be optimized, bins that are being over- or under-serviced, " +
-      "and recommend specific changes to improve fuel efficiency and reduce operational costs.",
-  };
-
   return (
-    `${typeInstructions[type]}\n\n` +
-    `Here is the current operational data:\n\`\`\`json\n${dataJson}\n\`\`\``
+    `${TYPE_INSTRUCTIONS[type]}\n\n` +
+    `Operational data:\n\`\`\`json\n${dataJson}\n\`\`\``
   );
 }
 
 // ─── LLM API callers ─────────────────────────────────────────────────────────
 
+/**
+ * Google Gemini — uses systemInstruction so the static system prompt is
+ * sent separately from the dynamic user content, enabling Google's implicit
+ * context caching for repeated calls with the same system text.
+ */
 async function callGemini(
   apiKey: string,
   model: string,
   systemPrompt: string,
   userPrompt: string
 ): Promise<string> {
-  const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
-
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: fullPrompt }] }],
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
+        },
+        contents: [
+          { role: "user", parts: [{ text: userPrompt }] },
+        ],
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 1024,
@@ -345,9 +351,7 @@ async function callGemini(
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(
-      `Gemini API error (${response.status}): ${errorBody}`
-    );
+    throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
   }
 
   const json = (await response.json()) as {
@@ -357,22 +361,66 @@ async function callGemini(
     error?: { message?: string };
   };
 
-  if (json.error) {
-    throw new Error(`Gemini API error: ${json.error.message}`);
-  }
+  if (json.error) throw new Error(`Gemini API error: ${json.error.message}`);
 
-  const text =
-    json.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!text) {
-    throw new Error(
-      "Gemini API returned an empty response. No candidates or text found."
-    );
-  }
-
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini returned an empty response.");
   return text;
 }
 
+/**
+ * OpenAI — standard chat completions. gpt-4o and gpt-4o-mini automatically
+ * cache prompt prefixes ≥ 1024 tokens server-side (no extra config needed).
+ * Supports any OpenAI-compatible base URL (Azure, LM Studio, etc.).
+ */
+async function callOpenAI(
+  apiKey: string,
+  model: string,
+  baseUrl: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`OpenAI API error (${response.status}): ${errorBody}`);
+  }
+
+  const json = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    error?: { message?: string };
+  };
+
+  if (json.error) throw new Error(`OpenAI API error: ${json.error.message}`);
+
+  const text = json.choices?.[0]?.message?.content;
+  if (!text) throw new Error("OpenAI returned an empty response.");
+  return text;
+}
+
+/**
+ * OpenRouter — OpenAI-compatible with an extra cache_control hint so
+ * providers that support it (Anthropic Claude via OpenRouter) can cache
+ * the static system prompt prefix.
+ */
 async function callOpenRouter(
   apiKey: string,
   model: string,
@@ -392,7 +440,14 @@ async function callOpenRouter(
       body: JSON.stringify({
         model,
         messages: [
-          { role: "system", content: systemPrompt },
+          {
+            role: "system",
+            content: systemPrompt,
+            // cache_control hint for Anthropic models routed through OpenRouter
+            ...(model.startsWith("anthropic/")
+              ? { cache_control: { type: "ephemeral" } }
+              : {}),
+          },
           { role: "user", content: userPrompt },
         ],
         temperature: 0.7,
@@ -409,27 +464,22 @@ async function callOpenRouter(
   }
 
   const json = (await response.json()) as {
-    choices?: Array<{
-      message?: { content?: string };
-    }>;
+    choices?: Array<{ message?: { content?: string } }>;
     error?: { message?: string };
   };
 
-  if (json.error) {
+  if (json.error)
     throw new Error(`OpenRouter API error: ${json.error.message}`);
-  }
 
   const text = json.choices?.[0]?.message?.content;
-
-  if (!text) {
-    throw new Error(
-      "OpenRouter API returned an empty response. No choices or content found."
-    );
-  }
-
+  if (!text) throw new Error("OpenRouter returned an empty response.");
   return text;
 }
 
+/**
+ * Ollama — local inference. keep_alive: -1 keeps the model resident in memory
+ * between calls so subsequent requests don't pay the model-load latency.
+ */
 async function callOllama(
   baseUrl: string,
   model: string,
@@ -446,6 +496,7 @@ async function callOllama(
         { role: "user", content: userPrompt },
       ],
       stream: false,
+      keep_alive: -1, // keep model loaded in memory indefinitely
       options: {
         temperature: 0.7,
         num_predict: 1024,
@@ -463,17 +514,62 @@ async function callOllama(
     error?: string;
   };
 
-  if (json.error) {
-    throw new Error(`Ollama error: ${json.error}`);
-  }
+  if (json.error) throw new Error(`Ollama error: ${json.error}`);
 
   const text = json.message?.content;
-
-  if (!text) {
-    throw new Error("Ollama returned an empty response.");
-  }
-
+  if (!text) throw new Error("Ollama returned an empty response.");
   return text;
+}
+
+// ─── Lightweight connection test ─────────────────────────────────────────────
+
+/**
+ * Sends the smallest possible prompt to verify the provider is reachable and
+ * the API key is valid. Returns provider + model info on success.
+ */
+export async function testConnection(): Promise<{
+  ok: boolean;
+  provider: string;
+  model: string;
+  message: string;
+}> {
+  const config = await getAIConfig();
+  const ping = "Reply with the single word: ok";
+
+  try {
+    let reply: string;
+
+    if (config.provider === "gemini") {
+      reply = await callGemini(config.apiKey, config.model, "You are a test assistant.", ping);
+    } else if (config.provider === "openai") {
+      reply = await callOpenAI(
+        config.apiKey,
+        config.model,
+        config.openaiBaseUrl ?? "https://api.openai.com/v1",
+        "You are a test assistant.",
+        ping
+      );
+    } else if (config.provider === "ollama") {
+      reply = await callOllama(
+        config.ollamaUrl ?? "http://localhost:11434",
+        config.model,
+        "You are a test assistant.",
+        ping
+      );
+    } else {
+      reply = await callOpenRouter(config.apiKey, config.model, "You are a test assistant.", ping);
+    }
+
+    return {
+      ok: true,
+      provider: config.provider,
+      model: config.model,
+      message: `Connected to ${config.provider} (${config.model}). Response: "${reply.trim().slice(0, 60)}"`,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { ok: false, provider: config.provider, model: config.model, message };
+  }
 }
 
 // ─── Main export ─────────────────────────────────────────────────────────────
@@ -483,9 +579,7 @@ export async function generateInsight(
 ): Promise<InsightResponse> {
   const config = await getAIConfig();
 
-  // Fetch relevant data based on insight type
   let data: unknown;
-
   switch (request.type) {
     case "general":
       data = await fetchGeneralData(request.subdivisionId);
@@ -507,13 +601,25 @@ export async function generateInsight(
   }
 
   const userPrompt = buildUserPrompt(request.type, data);
-
   let insight: string;
 
   if (config.provider === "gemini") {
     insight = await callGemini(config.apiKey, config.model, SYSTEM_PROMPT, userPrompt);
+  } else if (config.provider === "openai") {
+    insight = await callOpenAI(
+      config.apiKey,
+      config.model,
+      config.openaiBaseUrl ?? "https://api.openai.com/v1",
+      SYSTEM_PROMPT,
+      userPrompt
+    );
   } else if (config.provider === "ollama") {
-    insight = await callOllama(config.ollamaUrl ?? "http://localhost:11434", config.model, SYSTEM_PROMPT, userPrompt);
+    insight = await callOllama(
+      config.ollamaUrl ?? "http://localhost:11434",
+      config.model,
+      SYSTEM_PROMPT,
+      userPrompt
+    );
   } else {
     insight = await callOpenRouter(config.apiKey, config.model, SYSTEM_PROMPT, userPrompt);
   }

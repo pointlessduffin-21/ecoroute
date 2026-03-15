@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "bun run src/db/seed.ts"
+    "db:seed": "bun run src/db/seed.ts",
+    "mcp": "bun run src/mcp/ecoroute-mcp-server.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@supabase/supabase-js": "^2.95.3",
     "dotenv": "^17.2.4",
     "drizzle-orm": "^0.45.1",

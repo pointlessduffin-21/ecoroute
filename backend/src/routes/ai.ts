@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { eq, and, isNull, desc, gte, sql } from "drizzle-orm";
-import { generateInsight } from "../services/ai-insights";
+import { generateInsight, testConnection } from "../services/ai-insights";
 import { env } from "../config/env";
 import { requireRole } from "../middleware/rbac";
 import { getDb } from "../config/database";
@@ -39,6 +39,22 @@ const optimizeRouteSchema = z.object({
   numVehicles: z.number().int().positive().default(1),
   vehicleCapacity: z.number().int().positive().default(1000),
   thresholdPercent: z.number().min(0).max(100).default(70),
+});
+
+// ─── POST /test — Lightweight provider connectivity check ───────────────────
+
+app.post("/test", async (c) => {
+  try {
+    const result = await testConnection();
+    if (result.ok) {
+      return c.json({ data: result });
+    }
+    return c.json({ error: result.message, data: result }, 502);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Connection test failed";
+    console.error("[ai-test] Error:", message);
+    return c.json({ error: message }, 500);
+  }
 });
 
 // ─── GET /insights — Get all cached insights ────────────────────────────────

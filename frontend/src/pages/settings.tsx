@@ -74,26 +74,28 @@ export function SettingsPage() {
 
   // AI Configuration state
   const [aiSettings, setAiSettings] = useState({
-    aiProvider: "none" as "gemini" | "openrouter" | "ollama" | "none",
+    aiProvider: "none" as "gemini" | "openrouter" | "ollama" | "openai" | "none",
     aiApiKey: "",
     aiModel: "",
     aiOllamaUrl: "http://localhost:11434",
+    aiOpenaiBaseUrl: "https://api.openai.com/v1",
   });
   const [aiSaved, setAiSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [aiTestStatus, setAiTestStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [aiTestMessage, setAiTestMessage] = useState("");
 
-  // AI test connection mutation
+  // AI test connection mutation — uses lightweight /ai/test, not a full insight generation
   const testAiMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post("/ai/insights", { type: "general" });
+      const res = await api.post("/ai/test");
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       setAiTestStatus("success");
-      setAiTestMessage("Connection successful! AI provider is responding.");
-      setTimeout(() => setAiTestStatus("idle"), 4000);
+      const msg = data?.data?.message ?? "Connection successful! AI provider is responding.";
+      setAiTestMessage(msg);
+      setTimeout(() => setAiTestStatus("idle"), 5000);
     },
     onError: (error: unknown) => {
       setAiTestStatus("error");
@@ -166,7 +168,7 @@ export function SettingsPage() {
       if (configMap["ai_provider"] !== undefined) {
         setAiSettings(prev => ({
           ...prev,
-          aiProvider: configMap["ai_provider"] as "gemini" | "openrouter" | "ollama" | "none",
+          aiProvider: configMap["ai_provider"] as "gemini" | "openrouter" | "ollama" | "openai" | "none",
         }));
       }
       if (configMap["ai_api_key"] !== undefined) {
@@ -185,6 +187,12 @@ export function SettingsPage() {
         setAiSettings(prev => ({
           ...prev,
           aiOllamaUrl: configMap["ai_ollama_url"],
+        }));
+      }
+      if (configMap["ai_openai_base_url"] !== undefined) {
+        setAiSettings(prev => ({
+          ...prev,
+          aiOpenaiBaseUrl: configMap["ai_openai_base_url"],
         }));
       }
     }
@@ -224,6 +232,7 @@ export function SettingsPage() {
       { key: "ai_api_key", value: aiSettings.aiApiKey },
       { key: "ai_model", value: aiSettings.aiModel },
       { key: "ai_ollama_url", value: aiSettings.aiOllamaUrl },
+      { key: "ai_openai_base_url", value: aiSettings.aiOpenaiBaseUrl },
     ]);
     setAiSaved(true);
     setTimeout(() => setAiSaved(false), 2000);
@@ -233,7 +242,15 @@ export function SettingsPage() {
     if (aiSettings.aiProvider === "gemini") return "gemini-2.0-flash";
     if (aiSettings.aiProvider === "openrouter") return "google/gemini-2.0-flash-001";
     if (aiSettings.aiProvider === "ollama") return "llama3.2";
+    if (aiSettings.aiProvider === "openai") return "gpt-4o-mini";
     return "Select a provider first";
+  };
+
+  // Test button is enabled when the provider can actually be tested
+  const canTestConnection = () => {
+    if (aiSettings.aiProvider === "none") return false;
+    if (aiSettings.aiProvider === "ollama") return aiSettings.aiOllamaUrl.trim().length > 0;
+    return aiSettings.aiApiKey.trim().length > 0;
   };
 
   return (
@@ -568,7 +585,8 @@ export function SettingsPage() {
                 <div className="flex flex-wrap gap-3">
                   {([
                     { value: "gemini" as const, label: "Google Gemini", description: "Direct Gemini API access" },
-                    { value: "openrouter" as const, label: "OpenRouter", description: "Multi-provider gateway" },
+                    { value: "openai" as const, label: "OpenAI", description: "GPT-4o, GPT-4o-mini, and compatible APIs" },
+                    { value: "openrouter" as const, label: "OpenRouter", description: "Multi-provider gateway (100+ models)" },
                     { value: "ollama" as const, label: "Ollama", description: "Local AI (no API key needed)" },
                     { value: "none" as const, label: "Disabled", description: "AI features off" },
                   ] as const).map((provider) => (
@@ -588,7 +606,7 @@ export function SettingsPage() {
                         onChange={(e) =>
                           setAiSettings({
                             ...aiSettings,
-                            aiProvider: e.target.value as "gemini" | "openrouter" | "ollama" | "none",
+                            aiProvider: e.target.value as "gemini" | "openrouter" | "ollama" | "openai" | "none",
                           })
                         }
                         className="mt-0.5"
@@ -613,15 +631,12 @@ export function SettingsPage() {
                         <Input
                           value={aiSettings.aiOllamaUrl}
                           onChange={(e) =>
-                            setAiSettings({
-                              ...aiSettings,
-                              aiOllamaUrl: e.target.value,
-                            })
+                            setAiSettings({ ...aiSettings, aiOllamaUrl: e.target.value })
                           }
                           placeholder="http://localhost:11434"
                         />
                         <p className="text-xs text-muted-foreground">
-                          URL of your running Ollama instance. No API key needed.
+                          URL of your running Ollama instance. Model stays loaded between calls.
                         </p>
                       </div>
                     ) : (
@@ -632,10 +647,7 @@ export function SettingsPage() {
                             type={showApiKey ? "text" : "password"}
                             value={aiSettings.aiApiKey}
                             onChange={(e) =>
-                              setAiSettings({
-                                ...aiSettings,
-                                aiApiKey: e.target.value,
-                              })
+                              setAiSettings({ ...aiSettings, aiApiKey: e.target.value })
                             }
                             placeholder="Enter your API key"
                             className="pr-10"
@@ -645,11 +657,7 @@ export function SettingsPage() {
                             onClick={() => setShowApiKey(!showApiKey)}
                             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           >
-                            {showApiKey ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
+                            {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                           </button>
                         </div>
                         <p className="text-xs text-muted-foreground">
@@ -664,22 +672,38 @@ export function SettingsPage() {
                       <Input
                         value={aiSettings.aiModel}
                         onChange={(e) =>
-                          setAiSettings({
-                            ...aiSettings,
-                            aiModel: e.target.value,
-                          })
+                          setAiSettings({ ...aiSettings, aiModel: e.target.value })
                         }
                         placeholder={getModelPlaceholder()}
                       />
                       <p className="text-xs text-muted-foreground">
                         {aiSettings.aiProvider === "gemini"
                           ? "Default: gemini-2.0-flash"
-                          : aiSettings.aiProvider === "ollama"
-                            ? "Default: llama3.2 (run: ollama pull llama3.2)"
-                            : "Default: google/gemini-2.0-flash-001"}
+                          : aiSettings.aiProvider === "openai"
+                            ? "Default: gpt-4o-mini (gpt-4o, o1-mini also supported)"
+                            : aiSettings.aiProvider === "ollama"
+                              ? "Default: llama3.2 (run: ollama pull llama3.2)"
+                              : "Default: google/gemini-2.0-flash-001"}
                       </p>
                     </div>
                   </div>
+
+                  {/* OpenAI: optional custom base URL */}
+                  {aiSettings.aiProvider === "openai" && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Base URL <span className="text-muted-foreground font-normal">(optional)</span></label>
+                      <Input
+                        value={aiSettings.aiOpenaiBaseUrl}
+                        onChange={(e) =>
+                          setAiSettings({ ...aiSettings, aiOpenaiBaseUrl: e.target.value })
+                        }
+                        placeholder="https://api.openai.com/v1"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Change for Azure OpenAI, LM Studio, or other OpenAI-compatible endpoints.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -693,7 +717,7 @@ export function SettingsPage() {
                         setAiTestStatus("loading");
                         testAiMutation.mutate();
                       }}
-                      disabled={aiTestStatus === "loading" || !aiSettings.aiApiKey}
+                      disabled={aiTestStatus === "loading" || !canTestConnection()}
                     >
                       {aiTestStatus === "loading" ? (
                         <>

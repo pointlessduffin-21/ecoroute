@@ -24,6 +24,108 @@ import com.ecoroute.app.ble.ScannedDevice
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProvisioningScreen(
+    bleViewModel: ProvisioningViewModel = hiltViewModel(),
+    wifiApViewModel: WifiApProvisioningViewModel = hiltViewModel(),
+) {
+    // Method selector: null = not chosen yet
+    var selectedMethod by remember { mutableStateOf<ProvisioningMethod?>(null) }
+
+    when (selectedMethod) {
+        ProvisioningMethod.BLE -> BleProvisioningContent(viewModel = bleViewModel)
+        ProvisioningMethod.WIFI_AP -> WifiApProvisioningScreen(viewModel = wifiApViewModel)
+        null -> MethodSelectionScreen(onSelect = { selectedMethod = it })
+    }
+}
+
+enum class ProvisioningMethod { BLE, WIFI_AP }
+
+@Composable
+private fun MethodSelectionScreen(onSelect: (ProvisioningMethod) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            "Choose Provisioning Method",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            "How would you like to configure your smart bin?",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Card(
+            onClick = { onSelect(ProvisioningMethod.BLE) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.padding(20.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Bluetooth,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Bluetooth (BLE)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Scan nearby bins and configure via Bluetooth. Requires BLE permission.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null)
+            }
+        }
+
+        Card(
+            onClick = { onSelect(ProvisioningMethod.WIFI_AP) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.padding(20.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Wifi,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(36.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "WiFi Setup AP",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Connect your phone to the bin's WiFi hotspot (ECO-BIN-SETUP) and configure via HTTP.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null)
+            }
+        }
+    }
+}
+
+// The original BLE provisioning content, extracted so the method selector can wrap it.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BleProvisioningContent(
     viewModel: ProvisioningViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
