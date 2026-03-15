@@ -5,16 +5,16 @@ echo "=== EcoRoute Backend Startup ==="
 
 # Push schema to database (idempotent — safe to run every time)
 echo "Pushing database schema..."
-npx drizzle-kit push --force 2>&1 || {
+bun x drizzle-kit push --force 2>&1 || {
   echo "WARNING: db:push failed. Database may not be ready yet."
   echo "Retrying in 5 seconds..."
   sleep 5
-  npx drizzle-kit push --force 2>&1 || echo "WARNING: db:push failed again. Continuing anyway."
+  bun x drizzle-kit push --force 2>&1 || echo "WARNING: db:push failed again. Continuing anyway."
 }
 
 # Seed if database is empty (check if user table has rows)
 echo "Checking if seed data is needed..."
-node --import tsx/esm -e "
+bun run -e "
   import { getDb, closeDb } from './src/config/database.ts';
   import { users } from './src/db/schema.ts';
   const db = getDb();
@@ -30,8 +30,9 @@ node --import tsx/esm -e "
   }
 " || {
   echo "Running database seed..."
-  node --import tsx/esm src/db/seed.ts 2>&1 || echo "WARNING: seed failed."
+  bun run src/db/seed.ts 2>&1 || echo "WARNING: seed failed."
 }
 
 echo "Starting server..."
-exec node --import tsx/esm src/index.ts
+exec bun run src/index.ts
+
