@@ -75,6 +75,7 @@ export interface CollectionRoute {
   assignedDriverId: string | null;
   assignedVehicleId: string | null;
   scheduledDate: string | null;
+  routeGeojson: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -187,8 +188,12 @@ export interface AIInsight {
 
 export interface RouteOptimizationRequest {
   subdivisionId: string;
-  numVehicles?: number;
-  vehicleCapacityLiters?: number;
-  thresholdPercent?: number;
-  includePredicted?: boolean;
+  depotLat: number;
+  depotLng: number;
+  numVehicles: number;
+  vehicleCapacityLiters: number;
+  thresholdPercent: number;
+  includePredicted: boolean;
+  avoidHighways: boolean;
+  avoidTolls: boolean;
 }
