@@ -25,6 +25,8 @@ class OptimizeRequest(BaseModel):
     vehicle_capacity_liters: int = Field(default=1000, ge=100, le=50000)
     threshold_percent: float = Field(default=80.0, ge=0.0, le=100.0)
     include_predicted: bool = True
+    avoid_highways: bool = False
+    avoid_tolls: bool = False
 
 
 class RouteStop(BaseModel):
@@ -50,6 +52,7 @@ class OptimizeResponse(BaseModel):
     optimization_score: int
     num_bins_served: int
     status: str
+    route_geojson: Optional[dict] = None
 
 
 @router.post("/optimize", response_model=OptimizeResponse)
@@ -131,12 +134,19 @@ async def optimize_collection_route(request: OptimizeRequest):
             "lon": request.depot.longitude,
         }
 
+        avoid_features: list[str] = []
+        if request.avoid_highways:
+            avoid_features.append("highways")
+        if request.avoid_tolls:
+            avoid_features.append("tollways")
+
         # Run the CVRP optimizer
         result = await optimize_route(
             depot=depot,
             bins=optimizer_bins,
             num_vehicles=request.num_vehicles,
             vehicle_capacity=request.vehicle_capacity_liters,
+            avoid_features=avoid_features if avoid_features else None,
         )
 
         # Convert to response model
@@ -169,6 +179,7 @@ async def optimize_collection_route(request: OptimizeRequest):
             optimization_score=result.get("optimization_score", 0),
             num_bins_served=result.get("num_bins_served", 0),
             status=result.get("status", "success"),
+            route_geojson=result.get("route_geojson"),
         )
 
     except Exception as e:

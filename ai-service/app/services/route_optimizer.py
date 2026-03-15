@@ -41,7 +41,7 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 
 
 async def compute_distance_matrix(
-    depot: dict, bins: list[dict]
+    depot: dict, bins: list[dict], avoid_features: list[str] | None = None
 ) -> list[list[int]]:
     """
     Compute a distance matrix between all locations (depot + bins).
@@ -80,7 +80,9 @@ async def compute_distance_matrix(
                 "metrics": ["distance"],
                 "units": "m"
             }
-            
+            if avoid_features:
+                body["options"] = {"avoid_features": avoid_features}
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://api.openrouteservice.org/v2/matrix/driving-car",
@@ -125,6 +127,61 @@ async def compute_distance_matrix(
     return matrix
 
 
+async def get_route_geometry(
+    waypoints: list[dict], avoid_features: list[str] | None = None
+) -> dict | None:
+    """
+    Call ORS Directions API (driving-car) for road-following GeoJSON geometry.
+
+    Args:
+        waypoints: List of dicts with 'lat' and 'lon' keys (depot first, then stops, depot last).
+        avoid_features: Optional list of ORS avoid features e.g. ["highways", "tollways"].
+
+    Returns:
+        GeoJSON FeatureCollection dict, or None on failure (429, non-2xx, no API key, exception).
+    """
+    if not settings.ORS_API_KEY:
+        return None
+
+    if len(waypoints) < 2:
+        return None
+
+    # ORS requires [longitude, latitude]
+    coordinates = [[wp["lon"], wp["lat"]] for wp in waypoints]
+
+    body: dict = {"coordinates": coordinates}
+    if avoid_features:
+        body["options"] = {"avoid_features": avoid_features}
+
+    headers = {
+        "Authorization": settings.ORS_API_KEY,
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json, application/geo+json",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+                json=body,
+                headers=headers,
+                timeout=15.0,
+            )
+
+        if response.status_code == 200:
+            logger.info("ORS Directions geometry fetched for %d waypoints", len(waypoints))
+            return response.json()
+        else:
+            logger.warning(
+                "ORS Directions returned %d, skipping geometry", response.status_code
+            )
+            return None
+
+    except Exception as e:
+        logger.warning("get_route_geometry failed: %s", str(e))
+        return None
+
+
 def _calculate_naive_distance(
     depot: dict, bins: list[dict]
 ) -> float:
@@ -162,6 +219,7 @@ async def optimize_route(
     bins: list[dict],
     num_vehicles: int = 1,
     vehicle_capacity: int = 1000,
+    avoid_features: list[str] | None = None,
     distance_matrix: Optional[list[list[int]]] = None,
 ) -> dict:
     """
@@ -200,11 +258,12 @@ async def optimize_route(
             "optimization_score": 100,
             "num_bins_served": 0,
             "status": "no_bins",
+            "route_geojson": None,
         }
 
     # Compute distance matrix if not provided
     if distance_matrix is None:
-        distance_matrix = await compute_distance_matrix(depot, bins)
+        distance_matrix = await compute_distance_matrix(depot, bins, avoid_features=avoid_features)
 
     num_locations = len(bins) + 1  # +1 for depot
 
@@ -277,6 +336,7 @@ async def optimize_route(
             "optimization_score": 0,
             "num_bins_served": 0,
             "status": "no_solution",
+            "route_geojson": None,
         }
 
     # Extract solution
@@ -327,6 +387,22 @@ async def optimize_route(
 
     total_distance_km = total_distance_meters / 1000.0
 
+    # Fetch road geometry for each vehicle route, sequentially to respect ORS rate limits
+    all_features: list[dict] = []
+    for vehicle_route in routes:
+        waypoint_list = [{"lat": depot["lat"], "lon": depot["lon"]}]
+        for stop in vehicle_route["stops"]:
+            waypoint_list.append({"lat": stop["lat"], "lon": stop["lon"]})
+        waypoint_list.append({"lat": depot["lat"], "lon": depot["lon"]})
+
+        geometry = await get_route_geometry(waypoint_list, avoid_features=avoid_features)
+        if geometry and geometry.get("features"):
+            all_features.extend(geometry["features"])
+
+    route_geojson: dict | None = None
+    if all_features:
+        route_geojson = {"type": "FeatureCollection", "features": all_features}
+
     # Estimated duration: travel time + stop time
     travel_time_hours = total_distance_km / settings.AVG_SPEED_KMH
     travel_time_minutes = travel_time_hours * 60.0
@@ -359,4 +435,5 @@ async def optimize_route(
         "optimization_score": optimization_score,
         "num_bins_served": total_bins_served,
         "status": "success",
+        "route_geojson": route_geojson,
     }
