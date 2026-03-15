@@ -1,15 +1,13 @@
-FROM node:22-slim AS base
+FROM oven/bun:1-slim AS base
 WORKDIR /app
 
 # Install dependencies
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
-
-# Install tsx and drizzle-kit for TypeScript execution + DB management
-RUN npm install tsx drizzle-kit
+COPY package.json bun.lock* ./
+RUN bun install --production
 
 # Copy source
 COPY . .
+
 
 # Make entrypoint executable
 RUN chmod +x entrypoint.sh

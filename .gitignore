@@ -30,3 +30,8 @@ ai-service/venv/
 
 # Git worktrees
 .worktrees/
+
+#tooling
+docs/superpowers
+.codex
+.superpowers
