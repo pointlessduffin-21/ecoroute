@@ -55,6 +55,13 @@ const generateRouteSchema = z.object({
   scheduledDate: z.string().datetime().optional(),
   maxStops: z.number().int().positive().default(30),
   fillThreshold: z.number().min(0).max(100).default(70),
+  depotLat: z.number().optional(),
+  depotLng: z.number().optional(),
+  numVehicles: z.number().int().min(1).max(20).default(1),
+  vehicleCapacityLiters: z.number().int().min(100).max(50000).default(1000),
+  includePredicted: z.boolean().default(true),
+  avoidHighways: z.boolean().default(false),
+  avoidTolls: z.boolean().default(false),
 });
 
 // ─── GET / — List collection routes (filterable by status, date, driver) ────
@@ -229,28 +236,30 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
 
   const db = getDb();
 
-  // 1. Get depot coordinates from system_config for this subdivision
-  let depotLat = 14.5995; // Default: Manila
-  let depotLng = 120.9842;
+  // 1. Resolve depot coordinates: prefer request body, fall back to system_config, then Manila default
+  let depotLat = parsed.data.depotLat ?? 14.5995;
+  let depotLng = parsed.data.depotLng ?? 120.9842;
 
-  const depotConfigs = await db
-    .select({
-      key: systemConfig.configKey,
-      value: systemConfig.configValue,
-    })
-    .from(systemConfig)
-    .where(
-      and(
-        sql`${systemConfig.configKey} IN ('depot_latitude', 'depot_longitude')`,
-        eq(systemConfig.subdivisionId, parsed.data.subdivisionId)
-      )
-    );
+  if (parsed.data.depotLat == null || parsed.data.depotLng == null) {
+    const depotConfigs = await db
+      .select({
+        key: systemConfig.configKey,
+        value: systemConfig.configValue,
+      })
+      .from(systemConfig)
+      .where(
+        and(
+          sql`${systemConfig.configKey} IN ('depot_latitude', 'depot_longitude')`,
+          eq(systemConfig.subdivisionId, parsed.data.subdivisionId)
+        )
+      );
 
-  for (const cfg of depotConfigs) {
-    if (cfg.key === "depot_latitude") {
-      depotLat = parseFloat(cfg.value) || depotLat;
-    } else if (cfg.key === "depot_longitude") {
-      depotLng = parseFloat(cfg.value) || depotLng;
+    for (const cfg of depotConfigs) {
+      if (cfg.key === "depot_latitude") {
+        depotLat = parseFloat(cfg.value) || depotLat;
+      } else if (cfg.key === "depot_longitude") {
+        depotLng = parseFloat(cfg.value) || depotLng;
+      }
     }
   }
 
@@ -272,7 +281,9 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
     }>;
     total_distance_km?: number;
     total_duration_minutes?: number;
+    estimated_duration_minutes?: number;
     optimization_score?: number;
+    route_geojson?: unknown;
     error?: string;
   } | null = null;
 
@@ -288,9 +299,12 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
           latitude: depotLat,
           longitude: depotLng,
         },
-        num_vehicles: 1,
-        vehicle_capacity: 1000,
+        num_vehicles: parsed.data.numVehicles,
+        vehicle_capacity_liters: parsed.data.vehicleCapacityLiters,
         threshold_percent: parsed.data.fillThreshold,
+        include_predicted: parsed.data.includePredicted,
+        avoid_highways: parsed.data.avoidHighways,
+        avoid_tolls: parsed.data.avoidTolls,
       }),
     });
 
@@ -315,6 +329,10 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
     const aiStops = aiRoute.stops || [];
 
     // Create the collection_route record
+    const routeGeojsonStr = optimizationResult.route_geojson
+      ? JSON.stringify(optimizationResult.route_geojson)
+      : null;
+
     const [route] = await db
       .insert(collectionRoutes)
       .values({
@@ -325,7 +343,8 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
           : new Date(),
         optimizationScore: optimizationResult.optimization_score ?? null,
         estimatedDistanceKm: aiRoute.distance_km ?? optimizationResult.total_distance_km ?? null,
-        estimatedDurationMinutes: aiRoute.duration_minutes ?? optimizationResult.total_duration_minutes ?? null,
+        estimatedDurationMinutes: aiRoute.duration_minutes ?? optimizationResult.estimated_duration_minutes ?? optimizationResult.total_duration_minutes ?? null,
+        routeGeojson: routeGeojsonStr,
       })
       .returning();
 
