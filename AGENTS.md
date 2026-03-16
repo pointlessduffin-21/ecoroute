@@ -95,3 +95,34 @@ Frontend needs: `VITE_API_BASE_URL=http://localhost:3000/api/v1`
 - **Supabase + JWT dual auth:** Supabase is the production auth; JWT fallback allows local dev without Supabase credentials
 - **Python AI service is a separate microservice:** Backend calls it via HTTP at `AI_SERVICE_URL`; never import Python logic into the Node/Bun backend
 - **Drizzle schema is the source of truth:** Use `db:push` for rapid dev, `db:generate`+`db:migrate` for production changes
+
+## Review Guidelines
+
+When reviewing PRs, focus on these priorities:
+
+### P0 — Must Fix
+- SQL injection or unsanitized user input in database queries
+- Authentication/authorization bypasses (missing `authMiddleware` or `requireRole`)
+- Secrets or credentials committed to code (.env values, API keys, tokens)
+- Data leaks across subdivisions (every query MUST filter by `subdivisionId` for multi-tenancy)
+- Breaking changes to the MQTT telemetry ingestion pipeline
+
+### P1 — Should Fix
+- Missing error handling on database operations or external API calls
+- Type safety issues (implicit `any`, missing null checks on DB results)
+- Missing SSE event emissions when data changes (telemetry, alerts, route status)
+- Incorrect Drizzle ORM usage (wrong join types, missing `where` clauses)
+- Python AI service: NaN propagation, cross-device training data mixing, NULL handling
+
+### P2 — Nice to Fix
+- Import cleanup (unused imports)
+- Inconsistent error response formats
+- Missing loading/error states in React components
+- Console.log left in production code
+
+## Tech Constraints
+- Backend uses Hono (NOT Express) — middleware syntax is different
+- Auth supports both Supabase tokens and local JWT (dev fallback)
+- AI service runs on Python 3.9+ — avoid 3.10+ syntax (use `from __future__ import annotations` for union types)
+- Frontend uses Tailwind v4 — class syntax may differ from v3
+- All telemetry flows through MQTT; REST `/api/v1/device/telemetry` is a fallback only
