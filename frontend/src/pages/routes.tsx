@@ -190,8 +190,8 @@ function GenerateRouteModal({
 }) {
   const [params, setParams] = useState<RouteOptimizationRequest>({
     subdivisionId: subdivisions[0]?.id ?? "",
-    depotLat: 14.5995,
-    depotLng: 120.9842,
+    depotLat: 10.3157,
+    depotLng: 123.8854,
     numVehicles: 1,
     vehicleCapacityLiters: 1000,
     thresholdPercent: 80,
@@ -571,6 +571,13 @@ export function RoutesPage() {
 
   // ---- Effects ----
 
+  // Auto-select first route on load
+  useEffect(() => {
+    if (!selectedRouteId && routes.length > 0) {
+      setSelectedRouteId(routes[0]!.id);
+    }
+  }, [routes]);
+
   useEffect(() => {
     if (selectedRouteId && stopsResponse?.data) {
       const coords = stopsResponse.data
@@ -633,7 +640,14 @@ export function RoutesPage() {
     }
   })();
 
-  const defaultCenter: [number, number] = [14.5995, 120.9842];
+  // Default center: use first route's stop coords, or fall back to Cebu (where bins are)
+  const defaultCenter: [number, number] = useMemo(() => {
+    if (stopsResponse?.data && stopsResponse.data.length > 0) {
+      const first = stopsResponse.data.find(s => s.latitude && s.longitude);
+      if (first) return [first.latitude!, first.longitude!];
+    }
+    return [10.3157, 123.8854]; // Cebu default
+  }, [stopsResponse]);
 
   return (
     <div className="flex flex-col h-full">
