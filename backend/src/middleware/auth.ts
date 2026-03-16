@@ -11,14 +11,12 @@ export const authMiddleware: MiddlewareHandler<{
 }> = async (c, next) => {
   const authHeader = c.req.header("Authorization");
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return c.json({ error: "Missing or malformed Authorization header" }, 401);
-  }
-
-  const token = authHeader.slice(7);
+  // Support token in query params for SSE (EventSource doesn't support custom headers)
+  const queryToken = c.req.query("token");
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : queryToken;
 
   if (!token) {
-    return c.json({ error: "Missing authentication token" }, 401);
+    return c.json({ error: "Missing or malformed Authorization header" }, 401);
   }
 
   const db = getDb();
