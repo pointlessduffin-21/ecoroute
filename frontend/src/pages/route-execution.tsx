@@ -33,7 +33,21 @@ import {
   XCircle,
   Timer,
   Eye,
+  Trash2,
 } from "lucide-react";
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+
+function makeReportStopIcon(seq: number, status: string) {
+  const bg = status === "serviced" ? "#16a34a" : status === "skipped" ? "#d97706" : "#6b7280";
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:${bg};color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);">${seq}</div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -101,7 +115,8 @@ function parseIssueFromNotes(notes: string | null): {
 function calcDuration(start: string | null, end: string | null): string {
   if (!start || !end) return "--";
   const ms = new Date(end).getTime() - new Date(start).getTime();
-  if (ms <= 0) return "--";
+  if (ms < 0) return "--";
+  if (ms < 60000) return "< 1 min";
   const totalMinutes = Math.round(ms / 60000);
   if (totalMinutes < 60) return `${totalMinutes} min`;
   const hours = Math.floor(totalMinutes / 60);
@@ -723,6 +738,44 @@ export function RouteExecutionPage() {
 }
 
 // ---------------------------------------------------------------------------
+// BinPhotoInReport — fetches and shows the bin's photo + latest telemetry
+// ---------------------------------------------------------------------------
+
+function BinPhotoInReport({ deviceId, deviceCode }: { deviceId: string; deviceCode: string }) {
+  const { data: binData } = useQuery({
+    queryKey: ["bin-report", deviceId],
+    queryFn: async () => {
+      const res = await api.get(`/bins/${deviceId}`);
+      return res.data.data as { photoUrl?: string; capacityLiters?: number; latestTelemetry?: { fillLevelPercent?: number; batteryVoltage?: number } };
+    },
+    staleTime: 60000,
+  });
+
+  if (!binData) return null;
+
+  const hasPhoto = binData.photoUrl;
+  const fill = binData.latestTelemetry?.fillLevelPercent;
+  const battery = binData.latestTelemetry?.batteryVoltage;
+
+  return (
+    <div className="mb-2 flex gap-3 items-start">
+      {hasPhoto && (
+        <img
+          src={binData.photoUrl}
+          alt={`Bin ${deviceCode}`}
+          className="h-16 w-16 rounded-md border border-border object-cover shrink-0"
+        />
+      )}
+      <div className="text-xs text-muted-foreground space-y-0.5">
+        {binData.capacityLiters && <p>Capacity: {binData.capacityLiters}L</p>}
+        {fill != null && <p>Current fill: {fill.toFixed(1)}%</p>}
+        {battery != null && <p>Battery: {battery.toFixed(2)}V</p>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // RouteReport sub-component — shown when route is completed
 // ---------------------------------------------------------------------------
 
@@ -805,6 +858,48 @@ function RouteReport({
           </CardContent>
         </Card>
       </div>
+
+      {/* Route Map */}
+      {(() => {
+        const mapStops = stops.filter(s => s.latitude && s.longitude);
+        if (mapStops.length === 0) return null;
+        const center: [number, number] = [mapStops[0]!.latitude!, mapStops[0]!.longitude!];
+        const positions = mapStops.map(s => [s.latitude!, s.longitude!] as [number, number]);
+        return (
+          <Card>
+            <CardContent className="p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Route Map</h3>
+              <div className="h-64 rounded-lg overflow-hidden border border-border">
+                <MapContainer
+                  center={center}
+                  zoom={14}
+                  scrollWheelZoom={true}
+                  style={{ height: "100%", width: "100%" }}
+                >
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                  />
+                  {positions.length > 1 && (
+                    <Polyline positions={positions} pathOptions={{ color: "#1da253", weight: 3, opacity: 0.7, dashArray: "8 4" }} />
+                  )}
+                  {mapStops.map((stop) => (
+                    <Marker key={stop.id} position={[stop.latitude!, stop.longitude!]} icon={makeReportStopIcon(stop.sequenceOrder, stop.status)}>
+                      <Popup>
+                        <div className="text-xs space-y-0.5">
+                          <p className="font-semibold">{stop.deviceCode || stop.deviceId.slice(0, 8)}</p>
+                          <p className="capitalize">{stop.status}</p>
+                          {stop.notes && <p className="text-gray-500">{stop.notes.slice(0, 60)}</p>}
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+                </MapContainer>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Additional route metrics */}
       <Card>
@@ -934,21 +1029,36 @@ function RouteReport({
                     </Badge>
                   </div>
 
-                  {/* Timestamps */}
+                  {/* Location + Timestamps row */}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground mb-2">
+                    {stop.latitude && stop.longitude && (
+                      <span className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3" />
+                        {stop.latitude.toFixed(4)}, {stop.longitude.toFixed(4)}
+                      </span>
+                    )}
                     {stop.arrivedAt && (
-                      <span>Arrived: {formatDateTime(stop.arrivedAt)}</span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Arrived: {formatDateTime(stop.arrivedAt)}
+                      </span>
                     )}
                     {stop.servicedAt && (
-                      <span>Serviced: {formatDateTime(stop.servicedAt)}</span>
+                      <span className="flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" />
+                        Serviced: {formatDateTime(stop.servicedAt)}
+                      </span>
                     )}
                   </div>
 
-                  {/* Photo proof thumbnail */}
+                  {/* Bin photo from smart_bin record */}
+                  <BinPhotoInReport deviceId={stop.deviceId} deviceCode={stop.deviceCode || stop.deviceId.slice(0, 8)} />
+
+                  {/* Photo proof thumbnail (before/after from route execution) */}
                   {stop.photoProofUrl && (
                     <div className="mb-2">
                       <p className="text-xs font-medium text-muted-foreground mb-1">
-                        Photo Proof
+                        Collection Evidence
                       </p>
                       <img
                         src={stop.photoProofUrl}
@@ -961,6 +1071,7 @@ function RouteReport({
                   {/* Notes */}
                   {stop.notes && !stop.notes.startsWith("[ISSUE") && (
                     <div className="rounded-md bg-muted/50 p-2 text-xs text-foreground">
+                      <Trash2 className="h-3 w-3 inline mr-1 text-muted-foreground" />
                       {stop.notes}
                     </div>
                   )}
