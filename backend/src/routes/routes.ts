@@ -11,6 +11,7 @@ import {
   alerts,
   binTelemetry,
   shiftSchedules,
+  subdivisions,
 } from "../db/schema";
 import { optimizeRoute } from "../services/route-optimizer";
 import { requireRole } from "../middleware/rbac";
@@ -914,6 +915,8 @@ const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
   const db = getDb();
   const user = c.get("user");
+  const body = await c.req.json().catch(() => ({}));
+  const subdivisionId = (body as Record<string, unknown>).subdivisionId as string | undefined;
   const events: { step: number; action: string; detail: string; timestamp: string }[] = [];
   let simShift: typeof shiftSchedules.$inferSelect | undefined;
 
@@ -921,9 +924,17 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
     events.push({ step, action, detail, timestamp: new Date().toISOString() });
   }
 
+  if (!subdivisionId) {
+    return c.json({ success: false, error: "subdivisionId is required — select a subdivision to simulate" }, 400);
+  }
+
+  // Get subdivision name for logs
+  const [subRecord] = await db.select({ name: subdivisions.name }).from(subdivisions).where(eq(subdivisions.id, subdivisionId)).limit(1);
+  const subName = subRecord?.name ?? subdivisionId.slice(0, 8);
+
   try {
-    // Step 1: Find bins above threshold
-    const allBins = await db.select().from(smartBins).where(eq(smartBins.status, "active"));
+    // Step 1: Find bins above threshold in the selected subdivision
+    const allBins = await db.select().from(smartBins).where(and(eq(smartBins.status, "active"), eq(smartBins.subdivisionId, subdivisionId)));
     const binIds = allBins.map(b => b.id);
 
     if (binIds.length === 0) {
@@ -951,7 +962,7 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
       hotBins.push(...allBins.slice(0, 3));
     }
 
-    log(1, "scan", `Found ${hotBins.length} bins for collection (${hotBins.map(b => b.deviceCode).join(", ")})`);
+    log(1, "scan", `[${subName}] Found ${hotBins.length} bins for collection (${hotBins.map(b => b.deviceCode).join(", ")})`);
 
     // Step 2: Create shift schedule (simulated)
     const now = new Date();
@@ -970,12 +981,12 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
     }).returning();
     simShift = createdShift;
 
-    log(2, "create_schedule", `Shift created: ${DAY_NAMES[dayOfWeek]} ${startTime}-${endTime} for ${user.fullName || user.email}`);
+    log(2, "create_schedule", `[${subName}] Shift created: ${DAY_NAMES[dayOfWeek]} ${startTime}-${endTime} for ${user.fullName || user.email}`);
 
     // Step 3: Create route
-    const subdivisionId = hotBins[0]!.subdivisionId;
+    const routeSubId = hotBins[0]!.subdivisionId;
     const [route] = await db.insert(collectionRoutes).values({
-      subdivisionId: subdivisionId!,
+      subdivisionId: routeSubId!,
       status: "planned",
       estimatedDistanceKm: +(hotBins.length * 1.2).toFixed(1),
       estimatedDurationMinutes: +(hotBins.length * 8).toFixed(0),

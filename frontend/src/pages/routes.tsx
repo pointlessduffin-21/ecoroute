@@ -484,6 +484,7 @@ export function RoutesPage() {
   const [generateResult, setGenerateResult] = useState<CollectionRoute | null>(null);
   const [focusedStop, setFocusedStop] = useState<{ lat: number; lng: number } | null>(null);
   const [showSimModal, setShowSimModal] = useState(false);
+  const [simSubdivisionId, setSimSubdivisionId] = useState("");
   const [simRunning, setSimRunning] = useState(false);
   const [simEvents, setSimEvents] = useState<{step: number; action: string; detail: string; timestamp: string}[]>([]);
   const [simResult, setSimResult] = useState<{routeId: string; summary: {totalStops: number; serviced: number; skipped: number; issues: number}} | null>(null);
@@ -606,11 +607,12 @@ export function RoutesPage() {
   }
 
   async function runSimulation() {
+    if (!simSubdivisionId) return;
     setSimRunning(true);
     setSimEvents([]);
     setSimResult(null);
     try {
-      const res = await api.post("/routes/simulate");
+      const res = await api.post("/routes/simulate", { subdivisionId: simSubdivisionId });
       const data = res.data;
       if (data.success) {
         // Animate events appearing one by one
@@ -1117,9 +1119,26 @@ export function RoutesPage() {
             )}
 
             {/* Footer */}
-            <div className="border-t border-border p-4 flex justify-end gap-2">
+            <div className="border-t border-border p-4 space-y-3">
+              {/* Subdivision picker - always visible before running */}
               {!simRunning && simEvents.length === 0 && (
-                <Button onClick={runSimulation} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Subdivision</label>
+                  <select
+                    value={simSubdivisionId}
+                    onChange={(e) => setSimSubdivisionId(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="">Select a subdivision...</option>
+                    {subdivisions.map((sub) => (
+                      <option key={sub.id} value={sub.id}>{sub.name} ({sub.code})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+              {!simRunning && simEvents.length === 0 && (
+                <Button onClick={runSimulation} disabled={!simSubdivisionId} className="bg-[#1da253] hover:bg-[#1da253]/90">
                   <Play className="h-4 w-4 mr-1.5" />
                   Run Simulation
                 </Button>
@@ -1129,12 +1148,13 @@ export function RoutesPage() {
                   <Button variant="outline" onClick={() => { setSimEvents([]); setSimResult(null); }}>
                     Reset
                   </Button>
-                  <Button onClick={runSimulation} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                  <Button onClick={runSimulation} disabled={!simSubdivisionId} className="bg-[#1da253] hover:bg-[#1da253]/90">
                     <RefreshCw className="h-4 w-4 mr-1.5" />
                     Run Again
                   </Button>
                 </>
               )}
+              </div>
             </div>
           </div>
         </div>
