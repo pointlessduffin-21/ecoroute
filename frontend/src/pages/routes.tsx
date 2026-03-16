@@ -670,17 +670,6 @@ export function RoutesPage() {
             <Zap className="h-4 w-4 mr-1.5" />
             Simulate Workflow
           </Button>
-          <Button
-            className="bg-[#1da253] text-white hover:bg-[#1da253]/90"
-            onClick={() => {
-              setShowGenerateModal(true);
-              setGenerateResult(null);
-              generateRouteMutation.reset();
-            }}
-          >
-            <Play className="h-4 w-4 mr-1.5" />
-            Generate Route
-          </Button>
         </div>
       </div>
 
