@@ -39,7 +39,7 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --no-save
 
       - run: bunx tsc --noEmit
 
@@ -56,6 +56,6 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --no-save
 
       - run: bun run build
