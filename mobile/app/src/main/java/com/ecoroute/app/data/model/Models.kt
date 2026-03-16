@@ -226,6 +226,18 @@ data class UpdateStopStatusRequest(
     val photoProofUrl: String? = null,
 )
 
+// ── Photo Upload ───────────────────────────────────────────────────
+
+data class PhotoUploadResponse(
+    val photoUrl: String,
+)
+
+data class ReportIssueRequest(
+    val severity: String,
+    val description: String,
+    val photoUrl: String? = null,
+)
+
 // ── API Wrapper ─────────────────────────────────────────────────────
 
 data class ApiResponse<T>(

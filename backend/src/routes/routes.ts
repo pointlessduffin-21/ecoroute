@@ -1,11 +1,19 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, inArray } from "drizzle-orm";
 import { getDb } from "../config/database";
-import { collectionRoutes, routeStops, smartBins, systemConfig } from "../db/schema";
+import {
+  collectionRoutes,
+  routeStops,
+  smartBins,
+  systemConfig,
+  serviceEvents,
+  alerts,
+} from "../db/schema";
 import { env } from "../config/env";
 import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
+import { mkdirSync, writeFileSync } from "fs";
 
 const app = new Hono<{ Variables: AppVariables }>();
 
@@ -598,6 +606,318 @@ app.patch("/:id/stops/:stopId", async (c) => {
   }
 
   return c.json({ data: updated });
+});
+
+// ─── POST /:id/stops/:stopId/photo — Upload before/after photo ──────────
+
+app.post("/:id/stops/:stopId/photo", async (c) => {
+  const { id, stopId } = c.req.param();
+  const user = c.get("user");
+  const db = getDb();
+
+  // Verify route stop exists and belongs to this route
+  const stopResult = await db
+    .select({
+      id: routeStops.id,
+      routeId: routeStops.routeId,
+      deviceId: routeStops.deviceId,
+    })
+    .from(routeStops)
+    .where(and(eq(routeStops.id, stopId), eq(routeStops.routeId, id)))
+    .limit(1);
+
+  if (stopResult.length === 0) {
+    return c.json({ error: "Route stop not found" }, 404);
+  }
+
+  const stop = stopResult[0]!;
+
+  // Parse multipart form data
+  let formData: FormData;
+  try {
+    formData = await c.req.formData();
+  } catch {
+    return c.json({ error: "Invalid multipart form data" }, 400);
+  }
+
+  const photoFile = formData.get("photo");
+  const photoType = formData.get("type") as string | null;
+
+  if (!photoFile || !(photoFile instanceof File)) {
+    return c.json({ error: "Missing 'photo' file in form data" }, 400);
+  }
+
+  if (!photoType || !["before", "after"].includes(photoType)) {
+    return c.json(
+      { error: "Missing or invalid 'type' field. Must be 'before' or 'after'" },
+      400
+    );
+  }
+
+  // Save file to uploads directory
+  const timestamp = Date.now();
+  const dir = `uploads/route-photos/${id}`;
+  const filename = `${stopId}-${photoType}-${timestamp}.jpg`;
+  const filePath = `${dir}/${filename}`;
+
+  try {
+    mkdirSync(dir, { recursive: true });
+    const buffer = Buffer.from(await photoFile.arrayBuffer());
+    writeFileSync(filePath, buffer);
+  } catch (err) {
+    console.error("[route-photo] Failed to save file:", err);
+    return c.json({ error: "Failed to save photo" }, 500);
+  }
+
+  const photoUrl = `/${filePath}`;
+
+  // Update the route stop with the photo URL (use the photoProofUrl field)
+  if (photoType === "after") {
+    await db
+      .update(routeStops)
+      .set({ photoProofUrl: photoUrl })
+      .where(eq(routeStops.id, stopId));
+  }
+
+  // Create a service_event record for this photo
+  await db.insert(serviceEvents).values({
+    deviceId: stop.deviceId,
+    driverId: user.id,
+    routeId: id,
+    eventType: `photo_${photoType}`,
+    evidenceUrl: photoUrl,
+    notes: `${photoType} collection photo uploaded`,
+  });
+
+  return c.json({ photoUrl }, 201);
+});
+
+// ─── POST /:id/stops/:stopId/report-issue — Report an issue at a stop ────
+
+const reportIssueSchema = z.object({
+  severity: z.enum(["low", "medium", "high", "critical"]),
+  description: z.string().min(1).max(2000),
+  photoUrl: z.string().optional(),
+});
+
+app.post("/:id/stops/:stopId/report-issue", async (c) => {
+  const { id, stopId } = c.req.param();
+  const db = getDb();
+
+  const body = await c.req.json();
+  const parsed = reportIssueSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return c.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      400
+    );
+  }
+
+  // Verify route stop exists and get the bin info
+  const stopResult = await db
+    .select({
+      id: routeStops.id,
+      routeId: routeStops.routeId,
+      deviceId: routeStops.deviceId,
+    })
+    .from(routeStops)
+    .where(and(eq(routeStops.id, stopId), eq(routeStops.routeId, id)))
+    .limit(1);
+
+  if (stopResult.length === 0) {
+    return c.json({ error: "Route stop not found" }, 404);
+  }
+
+  const stop = stopResult[0]!;
+
+  // Get the bin's subdivision for the alert
+  const binResult = await db
+    .select({ subdivisionId: smartBins.subdivisionId })
+    .from(smartBins)
+    .where(eq(smartBins.id, stop.deviceId))
+    .limit(1);
+
+  const subdivisionId = binResult[0]?.subdivisionId ?? null;
+
+  // Create an alert record
+  const [created] = await db
+    .insert(alerts)
+    .values({
+      subdivisionId,
+      deviceId: stop.deviceId,
+      alertType: "sensor_anomaly",
+      severity: parsed.data.severity,
+      message: `Route issue reported: ${parsed.data.description}${
+        parsed.data.photoUrl ? ` [Photo: ${parsed.data.photoUrl}]` : ""
+      }`,
+    })
+    .returning();
+
+  return c.json({ data: created }, 201);
+});
+
+// ─── GET /:id/report — Generate a route completion report ─────────────────
+
+app.get("/:id/report", async (c) => {
+  const { id } = c.req.param();
+  const db = getDb();
+
+  // 1. Get the route
+  const routeResult = await db
+    .select()
+    .from(collectionRoutes)
+    .where(eq(collectionRoutes.id, id))
+    .limit(1);
+
+  if (routeResult.length === 0) {
+    return c.json({ error: "Route not found" }, 404);
+  }
+
+  const route = routeResult[0]!;
+
+  // 2. Get all stops with bin info
+  const stops = await db
+    .select({
+      id: routeStops.id,
+      routeId: routeStops.routeId,
+      deviceId: routeStops.deviceId,
+      sequenceOrder: routeStops.sequenceOrder,
+      status: routeStops.status,
+      arrivedAt: routeStops.arrivedAt,
+      servicedAt: routeStops.servicedAt,
+      photoProofUrl: routeStops.photoProofUrl,
+      notes: routeStops.notes,
+      deviceCode: smartBins.deviceCode,
+      latitude: smartBins.latitude,
+      longitude: smartBins.longitude,
+    })
+    .from(routeStops)
+    .leftJoin(smartBins, eq(routeStops.deviceId, smartBins.id))
+    .where(eq(routeStops.routeId, id))
+    .orderBy(routeStops.sequenceOrder);
+
+  // 3. Get service events (photos) for this route
+  const events = await db
+    .select()
+    .from(serviceEvents)
+    .where(eq(serviceEvents.routeId, id));
+
+  // Build a map of events per device for easy lookup
+  const eventsByDevice = new Map<
+    string,
+    Array<typeof serviceEvents.$inferSelect>
+  >();
+  for (const event of events) {
+    const list = eventsByDevice.get(event.deviceId) || [];
+    list.push(event);
+    eventsByDevice.set(event.deviceId, list);
+  }
+
+  // 4. Get alerts created during route execution for these bins
+  const stopDeviceIds = stops.map((s) => s.deviceId);
+  let routeAlerts: Array<typeof alerts.$inferSelect> = [];
+  if (stopDeviceIds.length > 0 && route.startedAt) {
+    routeAlerts = await db
+      .select()
+      .from(alerts)
+      .where(
+        and(
+          inArray(alerts.deviceId, stopDeviceIds),
+          gte(alerts.createdAt, route.startedAt)
+        )
+      );
+  }
+
+  const alertsByDevice = new Map<
+    string,
+    Array<typeof alerts.$inferSelect>
+  >();
+  for (const alert of routeAlerts) {
+    if (alert.deviceId) {
+      const list = alertsByDevice.get(alert.deviceId) || [];
+      list.push(alert);
+      alertsByDevice.set(alert.deviceId, list);
+    }
+  }
+
+  // 5. Build per-stop summary
+  const servicedCount = stops.filter((s) => s.status === "serviced").length;
+  const skippedCount = stops.filter((s) => s.status === "skipped").length;
+
+  // Calculate average time per stop (for stops that have both arrived and serviced timestamps)
+  let totalServiceTimeMs = 0;
+  let stopsWithTime = 0;
+  for (const stop of stops) {
+    if (stop.arrivedAt && stop.servicedAt) {
+      totalServiceTimeMs +=
+        new Date(stop.servicedAt).getTime() -
+        new Date(stop.arrivedAt).getTime();
+      stopsWithTime++;
+    }
+  }
+  const avgTimePerStopMinutes =
+    stopsWithTime > 0
+      ? Math.round((totalServiceTimeMs / stopsWithTime / 60000) * 100) / 100
+      : null;
+
+  const stopSummaries = stops.map((stop) => {
+    const deviceEvents = eventsByDevice.get(stop.deviceId) || [];
+    const beforePhotos = deviceEvents
+      .filter((e) => e.eventType === "photo_before")
+      .map((e) => e.evidenceUrl);
+    const afterPhotos = deviceEvents
+      .filter((e) => e.eventType === "photo_after")
+      .map((e) => e.evidenceUrl);
+    const deviceAlerts = alertsByDevice.get(stop.deviceId) || [];
+
+    return {
+      stopId: stop.id,
+      sequenceOrder: stop.sequenceOrder,
+      deviceCode: stop.deviceCode,
+      deviceId: stop.deviceId,
+      status: stop.status,
+      arrivedAt: stop.arrivedAt,
+      servicedAt: stop.servicedAt,
+      beforePhotos,
+      afterPhotos,
+      photoProofUrl: stop.photoProofUrl,
+      notes: stop.notes,
+      issues: deviceAlerts.map((a) => ({
+        severity: a.severity,
+        message: a.message,
+        createdAt: a.createdAt,
+      })),
+    };
+  });
+
+  // 6. Build the full report
+  const report = {
+    route: {
+      id: route.id,
+      subdivisionId: route.subdivisionId,
+      status: route.status,
+      scheduledDate: route.scheduledDate,
+      startedAt: route.startedAt,
+      completedAt: route.completedAt,
+      estimatedDistanceKm: route.estimatedDistanceKm,
+      estimatedDurationMinutes: route.estimatedDurationMinutes,
+      optimizationScore: route.optimizationScore,
+      assignedDriverId: route.assignedDriverId,
+    },
+    stops: stopSummaries,
+    stats: {
+      totalBins: stops.length,
+      servicedCount,
+      skippedCount,
+      pendingCount: stops.filter((s) => s.status === "pending").length,
+      arrivedCount: stops.filter((s) => s.status === "arrived").length,
+      avgTimePerStopMinutes,
+      totalIssues: routeAlerts.length,
+    },
+  };
+
+  return c.json({ data: report });
 });
 
 export default app;

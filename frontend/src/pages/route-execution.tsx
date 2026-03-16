@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
@@ -27,6 +27,12 @@ import {
   ChevronUp,
   X,
   ImageIcon,
+  Printer,
+  FileText,
+  RefreshCw,
+  XCircle,
+  Timer,
+  Eye,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +76,39 @@ const stopStatusLabel: Record<StopStatus, string> = {
   skipped: "Skipped",
 };
 
+const issueSeverityBadge: Record<string, "warning" | "destructive" | "info"> = {
+  minor: "info",
+  major: "warning",
+  critical: "destructive",
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Parse issue info embedded in stop notes (format: [ISSUE - SEVERITY] description) */
+function parseIssueFromNotes(notes: string | null): {
+  severity: string;
+  description: string;
+} | null {
+  if (!notes) return null;
+  const match = notes.match(/\[ISSUE\s*-\s*(\w+)\]\s*(.*)/);
+  if (!match) return null;
+  return { severity: match[1].toLowerCase(), description: match[2] };
+}
+
+/** Calculate duration between two date strings in a human-readable format */
+function calcDuration(start: string | null, end: string | null): string {
+  if (!start || !end) return "--";
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (ms <= 0) return "--";
+  const totalMinutes = Math.round(ms / 60000);
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  return `${hours}h ${mins}m`;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -93,11 +132,12 @@ export function RouteExecutionPage() {
   );
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  // ---- Fetch route details ----
+  // ---- Fetch route details (auto-refresh when in_progress) ----
   const {
     data: route,
     isLoading: routeLoading,
     isError: routeError,
+    dataUpdatedAt: routeUpdatedAt,
   } = useQuery<CollectionRoute>({
     queryKey: ["route", routeId],
     queryFn: async () => {
@@ -107,9 +147,13 @@ export function RouteExecutionPage() {
       return payload;
     },
     enabled: !!routeId,
+    refetchInterval: (query) => {
+      const routeData = query.state.data as CollectionRoute | undefined;
+      return routeData?.status === "in_progress" ? 10000 : false;
+    },
   });
 
-  // ---- Fetch route stops ----
+  // ---- Fetch route stops (auto-refresh when in_progress) ----
   const {
     data: stopsData,
     isLoading: stopsLoading,
@@ -125,6 +169,9 @@ export function RouteExecutionPage() {
       return [];
     },
     enabled: !!routeId,
+    refetchInterval: () => {
+      return route?.status === "in_progress" ? 10000 : false;
+    },
   });
 
   const stops = useMemo(
@@ -134,14 +181,86 @@ export function RouteExecutionPage() {
   );
 
   // ---- Derived state ----
-  const completedStops = stops.filter(
-    (s) => s.status === "serviced" || s.status === "skipped"
-  ).length;
+  const servicedStops = stops.filter((s) => s.status === "serviced").length;
+  const skippedStops = stops.filter((s) => s.status === "skipped").length;
+  const completedStops = servicedStops + skippedStops;
   const totalStops = stops.length;
   const progressPercent =
     totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
   const allStopsDone = totalStops > 0 && completedStops === totalStops;
   const nextPendingStop = stops.find((s) => s.status === "pending");
+  const isCompleted = route?.status === "completed";
+  const isInProgress = route?.status === "in_progress";
+
+  // Issues extracted from stop notes
+  const stopsWithIssues = useMemo(
+    () =>
+      stops
+        .map((s) => ({ stop: s, issue: parseIssueFromNotes(s.notes) }))
+        .filter((x) => x.issue !== null) as Array<{
+        stop: RouteStop;
+        issue: { severity: string; description: string };
+      }>,
+    [stops]
+  );
+
+  // Timeline events for completed route report
+  const timelineEvents = useMemo(() => {
+    if (!route) return [];
+    const events: Array<{
+      time: string;
+      label: string;
+      type: "start" | "arrive" | "service" | "skip" | "complete";
+      stopSeq?: number;
+    }> = [];
+
+    if (route.startedAt) {
+      events.push({
+        time: route.startedAt,
+        label: "Route started",
+        type: "start",
+      });
+    }
+
+    for (const stop of stops) {
+      if (stop.arrivedAt) {
+        events.push({
+          time: stop.arrivedAt,
+          label: `Arrived at Stop ${stop.sequenceOrder} (${stop.deviceCode || stop.deviceId.slice(0, 8)})`,
+          type: "arrive",
+          stopSeq: stop.sequenceOrder,
+        });
+      }
+      if (stop.servicedAt) {
+        events.push({
+          time: stop.servicedAt,
+          label: `Serviced Stop ${stop.sequenceOrder} (${stop.deviceCode || stop.deviceId.slice(0, 8)})`,
+          type: "service",
+          stopSeq: stop.sequenceOrder,
+        });
+      }
+      if (stop.status === "skipped" && stop.arrivedAt) {
+        events.push({
+          time: stop.arrivedAt,
+          label: `Skipped Stop ${stop.sequenceOrder} (${stop.deviceCode || stop.deviceId.slice(0, 8)})`,
+          type: "skip",
+          stopSeq: stop.sequenceOrder,
+        });
+      }
+    }
+
+    if (route.completedAt) {
+      events.push({
+        time: route.completedAt,
+        label: "Route completed",
+        type: "complete",
+      });
+    }
+
+    return events.sort(
+      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+    );
+  }, [route, stops]);
 
   // ---- Mutations ----
 
@@ -252,6 +371,10 @@ export function RouteExecutionPage() {
     setExpandedStopId((prev) => (prev === stopId ? null : stopId));
   }
 
+  const handlePrintReport = useCallback(() => {
+    window.print();
+  }, []);
+
   // ---- Loading / Error states ----
 
   if (routeLoading || stopsLoading) {
@@ -271,9 +394,9 @@ export function RouteExecutionPage() {
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
           Failed to load route. The route may not exist or you may not have permission to view it.
         </div>
-        <Button variant="outline" onClick={() => navigate("/my-routes")}>
+        <Button variant="outline" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />
-          Back to My Routes
+          Back
         </Button>
       </div>
     );
@@ -282,32 +405,45 @@ export function RouteExecutionPage() {
   // ---- Render ----
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print:space-y-4">
       {/* Back navigation */}
       <button
-        onClick={() => navigate("/my-routes")}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors print:hidden"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to My Routes
+        Back
       </button>
 
       {/* ---- Header section ---- */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">Route Execution</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {isCompleted ? "Route Report" : "Route Monitoring"}
+            </h1>
             <Badge variant={statusBadgeVariant[route.status]}>
               {statusLabel[route.status]}
             </Badge>
+            {isInProgress && (
+              <span className="flex items-center gap-1.5 text-xs text-amber-600 font-medium">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                Live -- auto-refreshing
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground font-mono">
             ID: {route.id}
           </p>
+          {routeUpdatedAt > 0 && isInProgress && (
+            <p className="text-xs text-muted-foreground">
+              Last updated: {formatDateTime(new Date(routeUpdatedAt))}
+            </p>
+          )}
         </div>
 
         {/* Route controls */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 print:hidden">
           {route.status === "planned" && (
             <Button
               onClick={handleStartRoute}
@@ -335,12 +471,18 @@ export function RouteExecutionPage() {
               Complete Route
             </Button>
           )}
+          {isCompleted && (
+            <Button variant="outline" onClick={handlePrintReport}>
+              <Printer className="h-4 w-4" />
+              Print Report
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Route status mutation feedback */}
       {updateRouteStatus.isError && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive print:hidden">
           Failed to update route status. Please try again.
         </div>
       )}
@@ -380,15 +522,19 @@ export function RouteExecutionPage() {
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50">
-              <Clock className="h-5 w-5 text-amber-600" />
+              <Timer className="h-5 w-5 text-amber-600" />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground">
-                {route.estimatedDurationMinutes != null
-                  ? `${route.estimatedDurationMinutes} min`
-                  : "--"}
+                {isCompleted
+                  ? calcDuration(route.startedAt, route.completedAt)
+                  : route.estimatedDurationMinutes != null
+                    ? `${route.estimatedDurationMinutes} min`
+                    : "--"}
               </p>
-              <p className="text-xs text-muted-foreground">Duration</p>
+              <p className="text-xs text-muted-foreground">
+                {isCompleted ? "Actual Duration" : "Est. Duration"}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -431,7 +577,7 @@ export function RouteExecutionPage() {
             />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {completedStops} of {totalStops} stops completed
+            {servicedStops} serviced, {skippedStops} skipped of {totalStops} stops
             {allStopsDone && route.status === "in_progress" && (
               <span className="ml-2 font-medium text-green-600">
                 -- All stops done! You can now complete the route.
@@ -472,6 +618,7 @@ export function RouteExecutionPage() {
                   isNext={isNext}
                   isExpanded={isExpanded}
                   isActionable={isActionable}
+                  isMonitoringView={isCompleted || isInProgress}
                   notes={stopNotes[stop.id] || ""}
                   photoPreview={photoPreviews[stop.id]}
                   issueReport={issueReports[stop.id]}
@@ -498,9 +645,23 @@ export function RouteExecutionPage() {
         )}
       </div>
 
+      {/* ---- Route Report (shown when route is completed) ---- */}
+      {isCompleted && (
+        <RouteReport
+          route={route}
+          stops={stops}
+          totalStops={totalStops}
+          servicedStops={servicedStops}
+          skippedStops={skippedStops}
+          stopsWithIssues={stopsWithIssues}
+          timelineEvents={timelineEvents}
+          onPrint={handlePrintReport}
+        />
+      )}
+
       {/* ---- Skip modal ---- */}
       {showSkipModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
           <div
             className="absolute inset-0 bg-black/50"
             onClick={() => setShowSkipModal(null)}
@@ -562,6 +723,324 @@ export function RouteExecutionPage() {
 }
 
 // ---------------------------------------------------------------------------
+// RouteReport sub-component — shown when route is completed
+// ---------------------------------------------------------------------------
+
+interface RouteReportProps {
+  route: CollectionRoute;
+  stops: RouteStop[];
+  totalStops: number;
+  servicedStops: number;
+  skippedStops: number;
+  stopsWithIssues: Array<{
+    stop: RouteStop;
+    issue: { severity: string; description: string };
+  }>;
+  timelineEvents: Array<{
+    time: string;
+    label: string;
+    type: "start" | "arrive" | "service" | "skip" | "complete";
+    stopSeq?: number;
+  }>;
+  onPrint: () => void;
+}
+
+function RouteReport({
+  route,
+  stops,
+  totalStops,
+  servicedStops,
+  skippedStops,
+  stopsWithIssues,
+  timelineEvents,
+  onPrint,
+}: RouteReportProps) {
+  const duration = calcDuration(route.startedAt, route.completedAt);
+
+  return (
+    <div className="space-y-6 border-t border-border pt-6" id="route-report">
+      {/* Report header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100">
+            <FileText className="h-5 w-5 text-green-700" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold tracking-tight">Route Completion Report</h2>
+            <p className="text-sm text-muted-foreground">
+              Completed {route.completedAt ? formatDateTime(route.completedAt) : "N/A"}
+            </p>
+          </div>
+        </div>
+        <Button variant="outline" onClick={onPrint} className="print:hidden">
+          <Printer className="h-4 w-4" />
+          Print Report
+        </Button>
+      </div>
+
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Card className="border-green-200 bg-green-50/50">
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold text-green-700">{totalStops}</p>
+            <p className="text-xs text-green-600 font-medium">Total Stops</p>
+          </CardContent>
+        </Card>
+        <Card className="border-green-200 bg-green-50/50">
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold text-green-700">{servicedStops}</p>
+            <p className="text-xs text-green-600 font-medium">Serviced</p>
+          </CardContent>
+        </Card>
+        <Card className="border-amber-200 bg-amber-50/50">
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold text-amber-700">{skippedStops}</p>
+            <p className="text-xs text-amber-600 font-medium">Skipped</p>
+          </CardContent>
+        </Card>
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold text-blue-700">{duration}</p>
+            <p className="text-xs text-blue-600 font-medium">Duration</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Additional route metrics */}
+      <Card>
+        <CardContent className="p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Route Metrics</h3>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Distance</p>
+              <p className="font-semibold">
+                {route.estimatedDistanceKm != null
+                  ? `${route.estimatedDistanceKm.toFixed(1)} km`
+                  : "--"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Optimization Score</p>
+              <p className="font-semibold">
+                {route.optimizationScore != null
+                  ? `${route.optimizationScore}%`
+                  : "--"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Started</p>
+              <p className="font-semibold">
+                {route.startedAt ? formatDateTime(route.startedAt) : "--"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Completed</p>
+              <p className="font-semibold">
+                {route.completedAt ? formatDateTime(route.completedAt) : "--"}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Timeline of events */}
+      {timelineEvents.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-4">Event Timeline</h3>
+            <div className="relative">
+              {/* Vertical line */}
+              <div className="absolute left-3 top-2 bottom-2 w-px bg-border" />
+
+              <div className="space-y-3">
+                {timelineEvents.map((event, idx) => {
+                  const iconColor =
+                    event.type === "start"
+                      ? "bg-blue-500"
+                      : event.type === "complete"
+                        ? "bg-green-500"
+                        : event.type === "service"
+                          ? "bg-green-400"
+                          : event.type === "skip"
+                            ? "bg-amber-400"
+                            : "bg-blue-300";
+                  return (
+                    <div key={idx} className="relative flex items-start gap-3 pl-1">
+                      <div
+                        className={cn(
+                          "relative z-10 mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-white shadow-sm",
+                          iconColor
+                        )}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-foreground">{event.label}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateTime(event.time)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Per-stop details with before/after photos */}
+      <Card>
+        <CardContent className="p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-4">
+            Stop Details
+          </h3>
+          <div className="space-y-4">
+            {stops.map((stop) => {
+              const issue = parseIssueFromNotes(stop.notes);
+              return (
+                <div
+                  key={stop.id}
+                  className={cn(
+                    "rounded-lg border p-3",
+                    stop.status === "serviced"
+                      ? "border-green-200 bg-green-50/30"
+                      : stop.status === "skipped"
+                        ? "border-amber-200 bg-amber-50/30"
+                        : "border-border"
+                  )}
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <div
+                      className={cn(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+                        stop.status === "serviced"
+                          ? "bg-green-100 text-green-700"
+                          : stop.status === "skipped"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-primary/10 text-primary"
+                      )}
+                    >
+                      {stop.sequenceOrder}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium text-foreground">
+                        {stop.deviceCode || stop.deviceId.slice(0, 8)}
+                      </span>
+                    </div>
+                    <Badge
+                      variant={stopStatusBadgeVariant[stop.status]}
+                      className="text-[10px]"
+                    >
+                      {stopStatusLabel[stop.status]}
+                    </Badge>
+                  </div>
+
+                  {/* Timestamps */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground mb-2">
+                    {stop.arrivedAt && (
+                      <span>Arrived: {formatDateTime(stop.arrivedAt)}</span>
+                    )}
+                    {stop.servicedAt && (
+                      <span>Serviced: {formatDateTime(stop.servicedAt)}</span>
+                    )}
+                  </div>
+
+                  {/* Photo proof thumbnail */}
+                  {stop.photoProofUrl && (
+                    <div className="mb-2">
+                      <p className="text-xs font-medium text-muted-foreground mb-1">
+                        Photo Proof
+                      </p>
+                      <img
+                        src={stop.photoProofUrl}
+                        alt={`Proof for stop ${stop.sequenceOrder}`}
+                        className="h-24 w-auto rounded-md border border-border object-cover"
+                      />
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  {stop.notes && !stop.notes.startsWith("[ISSUE") && (
+                    <div className="rounded-md bg-muted/50 p-2 text-xs text-foreground">
+                      {stop.notes}
+                    </div>
+                  )}
+
+                  {/* Issue badge */}
+                  {issue && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                      <Badge
+                        variant={issueSeverityBadge[issue.severity] || "warning"}
+                        className="text-[10px]"
+                      >
+                        {issue.severity.toUpperCase()}
+                      </Badge>
+                      <span className="text-xs text-foreground">
+                        {issue.description}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Issue summary */}
+      {stopsWithIssues.length > 0 && (
+        <Card className="border-amber-200">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Issues Reported ({stopsWithIssues.length})
+              </h3>
+            </div>
+            <div className="space-y-2">
+              {stopsWithIssues.map(({ stop, issue }) => (
+                <div
+                  key={stop.id}
+                  className="flex items-start gap-3 rounded-md border border-amber-100 bg-amber-50/50 p-3"
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700">
+                    {stop.sequenceOrder}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs font-medium text-foreground">
+                        {stop.deviceCode || stop.deviceId.slice(0, 8)}
+                      </span>
+                      <Badge
+                        variant={issueSeverityBadge[issue.severity] || "warning"}
+                        className="text-[10px]"
+                      >
+                        {issue.severity.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {issue.description}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Print report button at bottom */}
+      <div className="flex justify-center print:hidden">
+        <Button variant="outline" size="lg" onClick={onPrint}>
+          <Printer className="h-4 w-4" />
+          Download / Print Report
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // StopCard sub-component
 // ---------------------------------------------------------------------------
 
@@ -570,6 +1049,7 @@ interface StopCardProps {
   isNext: boolean;
   isExpanded: boolean;
   isActionable: boolean;
+  isMonitoringView: boolean;
   notes: string;
   photoPreview?: string;
   issueReport?: { severity: string; description: string };
@@ -590,6 +1070,7 @@ function StopCard({
   isNext,
   isExpanded,
   isActionable,
+  isMonitoringView,
   notes,
   photoPreview,
   issueReport,
@@ -605,13 +1086,14 @@ function StopCard({
   fileInputRef,
 }: StopCardProps) {
   const isDone = stop.status === "serviced" || stop.status === "skipped";
+  const parsedIssue = parseIssueFromNotes(stop.notes);
 
   return (
     <Card
       className={cn(
         "transition-all",
         isNext && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-        isDone && "opacity-75"
+        isDone && !isMonitoringView && "opacity-75"
       )}
     >
       {/* Stop header - always visible */}
@@ -625,9 +1107,11 @@ function StopCard({
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold",
             isNext
               ? "bg-primary text-primary-foreground"
-              : isDone
+              : stop.status === "serviced"
                 ? "bg-green-100 text-green-700"
-                : "bg-primary/10 text-primary"
+                : stop.status === "skipped"
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-primary/10 text-primary"
           )}
         >
           {stop.sequenceOrder}
@@ -647,6 +1131,16 @@ function StopCard({
                 Next Stop
               </Badge>
             )}
+            {/* Issue severity badge inline */}
+            {parsedIssue && (
+              <Badge
+                variant={issueSeverityBadge[parsedIssue.severity] || "warning"}
+                className="text-[10px]"
+              >
+                <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+                {parsedIssue.severity.toUpperCase()}
+              </Badge>
+            )}
           </div>
           {/* Timestamps */}
           <div className="mt-0.5 text-xs text-muted-foreground">
@@ -664,9 +1158,16 @@ function StopCard({
           </div>
         </div>
 
+        {/* Photo proof indicator (monitoring view) */}
+        {isMonitoringView && stop.photoProofUrl && (
+          <div className="shrink-0 print:hidden">
+            <Camera className="h-4 w-4 text-green-500" />
+          </div>
+        )}
+
         {/* Action buttons (visible at card level on non-mobile) */}
         {isActionable && !isDone && (
-          <div className="hidden sm:flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-2 print:hidden">
             {stop.status === "pending" && (
               <Button
                 size="sm"
@@ -735,7 +1236,7 @@ function StopCard({
         <div className="border-t border-border px-4 pb-4 pt-3 space-y-4">
           {/* Mobile action buttons */}
           {isActionable && !isDone && (
-            <div className="flex flex-wrap gap-2 sm:hidden">
+            <div className="flex flex-wrap gap-2 sm:hidden print:hidden">
               {stop.status === "pending" && (
                 <Button size="sm" onClick={onArrive} disabled={isUpdating}>
                   {isUpdating ? (
@@ -848,11 +1349,27 @@ function StopCard({
             </div>
           )}
 
+          {/* Issue report display (monitoring view) */}
+          {parsedIssue && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                <Badge
+                  variant={issueSeverityBadge[parsedIssue.severity] || "warning"}
+                  className="text-[10px]"
+                >
+                  {parsedIssue.severity.toUpperCase()}
+                </Badge>
+              </div>
+              <p className="text-sm text-foreground">{parsedIssue.description}</p>
+            </div>
+          )}
+
           {/* Editable sections (only for actionable stops) */}
           {isActionable && !isDone && (
             <>
               {/* Driver notes */}
-              <div className="space-y-2">
+              <div className="space-y-2 print:hidden">
                 <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
                   Notes
@@ -867,7 +1384,7 @@ function StopCard({
               </div>
 
               {/* Photo proof upload */}
-              <div className="space-y-2">
+              <div className="space-y-2 print:hidden">
                 <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <Camera className="h-3.5 w-3.5 text-muted-foreground" />
                   Photo Proof
@@ -906,7 +1423,7 @@ function StopCard({
               </div>
 
               {/* Issue reporting */}
-              <div className="space-y-2">
+              <div className="space-y-2 print:hidden">
                 <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground" />
                   Report Issue

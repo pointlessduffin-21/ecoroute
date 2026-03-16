@@ -1,6 +1,8 @@
 package com.ecoroute.app.data.remote
 
 import com.ecoroute.app.data.model.*
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -109,6 +111,22 @@ interface ApiService {
         @Path("stopId") stopId: String,
         @Body body: UpdateStopStatusRequest,
     ): Response<ApiResponse<RouteStop>>
+
+    @Multipart
+    @POST("routes/{routeId}/stops/{stopId}/photo")
+    suspend fun uploadStopPhoto(
+        @Path("routeId") routeId: String,
+        @Path("stopId") stopId: String,
+        @Part photo: MultipartBody.Part,
+        @Part("type") type: RequestBody,
+    ): Response<ApiResponse<PhotoUploadResponse>>
+
+    @POST("routes/{routeId}/stops/{stopId}/report-issue")
+    suspend fun reportStopIssue(
+        @Path("routeId") routeId: String,
+        @Path("stopId") stopId: String,
+        @Body request: ReportIssueRequest,
+    ): Response<ApiResponse<Any>>
 
     @POST("routes/generate")
     suspend fun generateRoute(

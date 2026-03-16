@@ -1,5 +1,7 @@
 package com.ecoroute.app.ui.screens.routeexecution
 
+import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,6 +16,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class StopPhotoState(
+    val beforePhotoUri: Uri? = null,
+    val afterPhotoUri: Uri? = null,
+    val beforePhotoUrl: String? = null,
+    val afterPhotoUrl: String? = null,
+    val isUploading: Boolean = false,
+    val uploadError: String? = null,
+)
+
 data class RouteExecutionUiState(
     val route: CollectionRoute? = null,
     val stops: List<RouteStop> = emptyList(),
@@ -22,11 +33,13 @@ data class RouteExecutionUiState(
     val error: String? = null,
     val actionInProgress: String? = null,
     val successMessage: String? = null,
+    val stopPhotos: Map<String, StopPhotoState> = emptyMap(),
 )
 
 @HiltViewModel
 class RouteExecutionViewModel @Inject constructor(
     private val repository: EcoRouteRepository,
+    private val application: Application,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -144,23 +157,92 @@ class RouteExecutionViewModel @Inject constructor(
         }
     }
 
+    fun setBeforePhoto(stopId: String, uri: Uri) {
+        _uiState.update { state ->
+            val current = state.stopPhotos[stopId] ?: StopPhotoState()
+            state.copy(stopPhotos = state.stopPhotos + (stopId to current.copy(beforePhotoUri = uri)))
+        }
+    }
+
+    fun setAfterPhoto(stopId: String, uri: Uri) {
+        _uiState.update { state ->
+            val current = state.stopPhotos[stopId] ?: StopPhotoState()
+            state.copy(stopPhotos = state.stopPhotos + (stopId to current.copy(afterPhotoUri = uri)))
+        }
+    }
+
     fun serviceStop(stopId: String, notes: String?, photoUri: String?) {
         viewModelScope.launch {
             _uiState.update { it.copy(actionInProgress = "servicing_$stopId") }
+
+            val photoState = _uiState.value.stopPhotos[stopId]
+            var beforeUrl: String? = null
+            var afterUrl: String? = null
+
+            // Upload before photo if present
+            photoState?.beforePhotoUri?.let { uri ->
+                _uiState.update { state ->
+                    val current = state.stopPhotos[stopId] ?: StopPhotoState()
+                    state.copy(stopPhotos = state.stopPhotos + (stopId to current.copy(isUploading = true)))
+                }
+
+                repository.uploadStopPhoto(routeId, stopId, uri, "before", application)
+                    .onSuccess { url -> beforeUrl = url }
+                    .onFailure { e ->
+                        _uiState.update {
+                            it.copy(
+                                actionInProgress = null,
+                                error = "Failed to upload before photo: ${e.message}",
+                            )
+                        }
+                        updatePhotoUploading(stopId, false)
+                        return@launch
+                    }
+            }
+
+            // Upload after photo if present
+            photoState?.afterPhotoUri?.let { uri ->
+                repository.uploadStopPhoto(routeId, stopId, uri, "after", application)
+                    .onSuccess { url -> afterUrl = url }
+                    .onFailure { e ->
+                        _uiState.update {
+                            it.copy(
+                                actionInProgress = null,
+                                error = "Failed to upload after photo: ${e.message}",
+                            )
+                        }
+                        updatePhotoUploading(stopId, false)
+                        return@launch
+                    }
+            }
+
+            updatePhotoUploading(stopId, false)
+
+            // Build the combined photo URL (before + after, separated by comma if both)
+            val combinedPhotoUrl = listOfNotNull(beforeUrl, afterUrl, photoUri)
+                .filter { it.isNotBlank() }
+                .joinToString(",")
+                .ifBlank { null }
 
             repository.updateStopStatus(
                 routeId = routeId,
                 stopId = stopId,
                 status = "serviced",
                 notes = notes?.takeIf { it.isNotBlank() },
-                photoProofUrl = photoUri,
+                photoProofUrl = combinedPhotoUrl,
             )
                 .onSuccess { updatedStop ->
                     updateStopInList(updatedStop)
-                    _uiState.update {
-                        it.copy(
+                    // Update photo URLs in state
+                    _uiState.update { state ->
+                        val current = state.stopPhotos[stopId] ?: StopPhotoState()
+                        state.copy(
                             actionInProgress = null,
                             successMessage = "Stop serviced",
+                            stopPhotos = state.stopPhotos + (stopId to current.copy(
+                                beforePhotoUrl = beforeUrl,
+                                afterPhotoUrl = afterUrl,
+                            )),
                         )
                     }
                 }
@@ -203,16 +285,23 @@ class RouteExecutionViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(actionInProgress = "reporting_$stopId") }
 
-            val issueNote = "[ISSUE - ${severity.uppercase()}] $description"
+            val photoState = _uiState.value.stopPhotos[stopId]
+            var photoUrl: String? = null
 
-            repository.updateStopStatus(
+            // Upload before photo as issue evidence if present
+            photoState?.beforePhotoUri?.let { uri ->
+                repository.uploadStopPhoto(routeId, stopId, uri, "issue", application)
+                    .onSuccess { url -> photoUrl = url }
+            }
+
+            repository.reportStopIssue(
                 routeId = routeId,
                 stopId = stopId,
-                status = "arrived",
-                notes = issueNote,
+                severity = severity,
+                description = description,
+                photoUrl = photoUrl,
             )
-                .onSuccess { updatedStop ->
-                    updateStopInList(updatedStop)
+                .onSuccess {
                     _uiState.update {
                         it.copy(
                             actionInProgress = null,
@@ -221,15 +310,44 @@ class RouteExecutionViewModel @Inject constructor(
                     }
                 }
                 .onFailure { e ->
-                    _uiState.update {
-                        it.copy(actionInProgress = null, error = "Failed to report issue: ${e.message}")
-                    }
+                    // Fallback: append issue note to stop status
+                    val issueNote = "[ISSUE - ${severity.uppercase()}] $description"
+                    repository.updateStopStatus(
+                        routeId = routeId,
+                        stopId = stopId,
+                        status = "arrived",
+                        notes = issueNote,
+                    )
+                        .onSuccess { updatedStop ->
+                            updateStopInList(updatedStop)
+                            _uiState.update {
+                                it.copy(
+                                    actionInProgress = null,
+                                    successMessage = "Issue reported",
+                                )
+                            }
+                        }
+                        .onFailure { fallbackError ->
+                            _uiState.update {
+                                it.copy(
+                                    actionInProgress = null,
+                                    error = "Failed to report issue: ${fallbackError.message}",
+                                )
+                            }
+                        }
                 }
         }
     }
 
     fun clearMessages() {
         _uiState.update { it.copy(error = null, successMessage = null) }
+    }
+
+    private fun updatePhotoUploading(stopId: String, uploading: Boolean) {
+        _uiState.update { state ->
+            val current = state.stopPhotos[stopId] ?: StopPhotoState()
+            state.copy(stopPhotos = state.stopPhotos + (stopId to current.copy(isUploading = uploading)))
+        }
     }
 
     private fun updateStopInList(updatedStop: RouteStop) {

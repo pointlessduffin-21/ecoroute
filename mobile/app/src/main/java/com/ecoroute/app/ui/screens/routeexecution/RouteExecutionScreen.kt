@@ -1,6 +1,12 @@
 package com.ecoroute.app.ui.screens.routeexecution
 
+import android.Manifest
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -12,15 +18,23 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.rememberAsyncImagePainter
 import com.ecoroute.app.data.model.CollectionRoute
 import com.ecoroute.app.data.model.RouteStop
 import com.ecoroute.app.ui.components.*
 import com.ecoroute.app.ui.theme.*
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +94,7 @@ fun RouteExecutionScreen(
                     stops = state.stops,
                     currentStopIndex = state.currentStopIndex,
                     actionInProgress = state.actionInProgress,
+                    stopPhotos = state.stopPhotos,
                     onStartRoute = { viewModel.startRoute() },
                     onCompleteRoute = { viewModel.completeRoute() },
                     onArriveAtStop = { viewModel.arriveAtStop(it) },
@@ -90,6 +105,8 @@ fun RouteExecutionScreen(
                     onReportIssue = { stopId, description, severity ->
                         viewModel.reportIssue(stopId, description, severity)
                     },
+                    onBeforePhotoCaptured = { stopId, uri -> viewModel.setBeforePhoto(stopId, uri) },
+                    onAfterPhotoCaptured = { stopId, uri -> viewModel.setAfterPhoto(stopId, uri) },
                 )
             }
         }
@@ -102,12 +119,15 @@ private fun RouteExecutionContent(
     stops: List<RouteStop>,
     currentStopIndex: Int,
     actionInProgress: String?,
+    stopPhotos: Map<String, StopPhotoState>,
     onStartRoute: () -> Unit,
     onCompleteRoute: () -> Unit,
     onArriveAtStop: (String) -> Unit,
     onServiceStop: (String, String?, String?) -> Unit,
     onSkipStop: (String, String) -> Unit,
     onReportIssue: (String, String, String) -> Unit,
+    onBeforePhotoCaptured: (String, Uri) -> Unit,
+    onAfterPhotoCaptured: (String, Uri) -> Unit,
 ) {
     val servicedCount = stops.count { it.status == "serviced" }
     val skippedCount = stops.count { it.status == "skipped" }
@@ -155,12 +175,15 @@ private fun RouteExecutionContent(
                 isCurrentStop = index == currentStopIndex,
                 isRouteActive = route.status == "in_progress",
                 actionInProgress = actionInProgress,
+                photoState = stopPhotos[stop.id] ?: StopPhotoState(),
                 onArrive = { onArriveAtStop(stop.id) },
                 onService = { notes, photoUri -> onServiceStop(stop.id, notes, photoUri) },
                 onSkip = { reason -> onSkipStop(stop.id, reason) },
                 onReportIssue = { description, severity ->
                     onReportIssue(stop.id, description, severity)
                 },
+                onBeforePhotoCaptured = { uri -> onBeforePhotoCaptured(stop.id, uri) },
+                onAfterPhotoCaptured = { uri -> onAfterPhotoCaptured(stop.id, uri) },
             )
         }
 
@@ -169,7 +192,7 @@ private fun RouteExecutionContent(
     }
 }
 
-// ── Route Header ────────────────────────────────────────────────────
+// -- Route Header -------------------------------------------------------
 
 @Composable
 private fun RouteHeaderCard(
@@ -265,7 +288,7 @@ private fun HeaderMetric(label: String, value: String) {
     }
 }
 
-// ── Route Action Button ─────────────────────────────────────────────
+// -- Route Action Button ------------------------------------------------
 
 @Composable
 private fun RouteActionButton(
@@ -368,19 +391,24 @@ private fun RouteActionButton(
     }
 }
 
-// ── Stop Card ───────────────────────────────────────────────────────
+// -- Stop Card ----------------------------------------------------------
 
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 private fun StopCard(
     stop: RouteStop,
     isCurrentStop: Boolean,
     isRouteActive: Boolean,
     actionInProgress: String?,
+    photoState: StopPhotoState,
     onArrive: () -> Unit,
     onService: (String?, String?) -> Unit,
     onSkip: (String) -> Unit,
     onReportIssue: (String, String) -> Unit,
+    onBeforePhotoCaptured: (Uri) -> Unit,
+    onAfterPhotoCaptured: (Uri) -> Unit,
 ) {
+    val context = LocalContext.current
     val (statusColor, statusBg) = statusColors(stop.status)
     val backgroundColor by animateColorAsState(
         targetValue = when {
@@ -395,7 +423,63 @@ private fun StopCard(
     var showSkipDialog by remember { mutableStateOf(false) }
     var showIssueDialog by remember { mutableStateOf(false) }
     var notesText by remember(stop.id) { mutableStateOf(stop.notes ?: "") }
-    var isExpanded by remember(stop.id) { mutableStateOf(isCurrentStop) }
+
+    // Camera permission
+    val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
+
+    // Temp file URIs for camera capture
+    var beforePhotoTempUri by remember { mutableStateOf<Uri?>(null) }
+    var afterPhotoTempUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Before photo camera launcher
+    val beforePhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+    ) { success ->
+        if (success && beforePhotoTempUri != null) {
+            onBeforePhotoCaptured(beforePhotoTempUri!!)
+        }
+    }
+
+    // After photo camera launcher
+    val afterPhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+    ) { success ->
+        if (success && afterPhotoTempUri != null) {
+            onAfterPhotoCaptured(afterPhotoTempUri!!)
+        }
+    }
+
+    // Helper to create temp file URI
+    fun createTempPhotoUri(prefix: String): Uri {
+        val photoDir = File(context.cacheDir, "photos")
+        if (!photoDir.exists()) photoDir.mkdirs()
+        val photoFile = File(photoDir, "${prefix}_${stop.id}_${System.currentTimeMillis()}.jpg")
+        return FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            photoFile,
+        )
+    }
+
+    fun launchBeforeCamera() {
+        if (cameraPermissionState.status.isGranted) {
+            val uri = createTempPhotoUri("before")
+            beforePhotoTempUri = uri
+            beforePhotoLauncher.launch(uri)
+        } else {
+            cameraPermissionState.launchPermissionRequest()
+        }
+    }
+
+    fun launchAfterCamera() {
+        if (cameraPermissionState.status.isGranted) {
+            val uri = createTempPhotoUri("after")
+            afterPhotoTempUri = uri
+            afterPhotoLauncher.launch(uri)
+        } else {
+            cameraPermissionState.launchPermissionRequest()
+        }
+    }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
@@ -544,6 +628,193 @@ private fun StopCard(
                         }
                     }
                     "arrived" -> {
+                        // -- Photo Capture Section --
+                        Text(
+                            "Photo Evidence",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            // Before Photo
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                if (photoState.beforePhotoUri != null) {
+                                    // Show before photo thumbnail
+                                    Image(
+                                        painter = rememberAsyncImagePainter(photoState.beforePhotoUri),
+                                        contentDescription = "Before photo",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(100.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.outlineVariant,
+                                                RoundedCornerShape(8.dp),
+                                            ),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "Before",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Green600,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    TextButton(
+                                        onClick = { launchBeforeCamera() },
+                                        modifier = Modifier.height(32.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            "Retake",
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
+                                } else {
+                                    // Take Before Photo button
+                                    OutlinedButton(
+                                        onClick = { launchBeforeCamera() },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(100.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        enabled = actionInProgress == null,
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.CameraAlt,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(28.dp),
+                                                tint = Blue500,
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                "Before Photo",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Blue500,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // After Photo
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                if (photoState.afterPhotoUri != null) {
+                                    // Show after photo thumbnail
+                                    Image(
+                                        painter = rememberAsyncImagePainter(photoState.afterPhotoUri),
+                                        contentDescription = "After photo",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(100.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.outlineVariant,
+                                                RoundedCornerShape(8.dp),
+                                            ),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "After",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Green600,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    TextButton(
+                                        onClick = { launchAfterCamera() },
+                                        modifier = Modifier.height(32.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            "Retake",
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
+                                } else {
+                                    // Take After Photo button (only available if before photo exists)
+                                    OutlinedButton(
+                                        onClick = { launchAfterCamera() },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(100.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        enabled = actionInProgress == null && photoState.beforePhotoUri != null,
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.CameraAlt,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(28.dp),
+                                                tint = if (photoState.beforePhotoUri != null) Green600
+                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                "After Photo",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (photoState.beforePhotoUri != null) Green600
+                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Upload progress indicator
+                        if (photoState.isUploading) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Uploading photos...",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
                         // Notes field
                         OutlinedTextField(
                             value = notesText,
@@ -556,13 +827,13 @@ private fun StopCard(
 
                         Spacer(Modifier.height(12.dp))
 
-                        // Complete service button
+                        // Complete service button (enabled when at least before photo exists)
                         Button(
                             onClick = { onService(notesText, null) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp),
-                            enabled = actionInProgress == null,
+                            enabled = actionInProgress == null && photoState.beforePhotoUri != null,
                             colors = ButtonDefaults.buttonColors(containerColor = Green600),
                             shape = RoundedCornerShape(10.dp),
                         ) {
@@ -581,7 +852,8 @@ private fun StopCard(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "Complete Service",
+                                if (photoState.beforePhotoUri == null) "Take Photo First"
+                                else "Service Done",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -593,24 +865,6 @@ private fun StopCard(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            // Skip button
-                            OutlinedButton(
-                                onClick = { showSkipDialog = true },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                enabled = actionInProgress == null,
-                                shape = RoundedCornerShape(10.dp),
-                            ) {
-                                Icon(
-                                    Icons.Filled.SkipNext,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text("Skip", style = MaterialTheme.typography.labelLarge)
-                            }
-
                             // Report issue button
                             OutlinedButton(
                                 onClick = { showIssueDialog = true },
@@ -629,7 +883,25 @@ private fun StopCard(
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.width(4.dp))
-                                Text("Issue", style = MaterialTheme.typography.labelLarge)
+                                Text("Report Issue", style = MaterialTheme.typography.labelLarge)
+                            }
+
+                            // Skip button
+                            OutlinedButton(
+                                onClick = { showSkipDialog = true },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                                enabled = actionInProgress == null,
+                                shape = RoundedCornerShape(10.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.SkipNext,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Skip", style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -657,6 +929,59 @@ private fun StopCard(
                         )
                     }
                 }
+
+                // Show photo proof thumbnails for serviced stops
+                if (stop.status == "serviced" && (photoState.beforePhotoUri != null || photoState.afterPhotoUri != null)) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        photoState.beforePhotoUri?.let { uri ->
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(uri),
+                                    contentDescription = "Before photo",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(60.dp)
+                                        .clip(RoundedCornerShape(6.dp)),
+                                    contentScale = ContentScale.Crop,
+                                )
+                                Text(
+                                    "Before",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        photoState.afterPhotoUri?.let { uri ->
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(uri),
+                                    contentDescription = "After photo",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(60.dp)
+                                        .clip(RoundedCornerShape(6.dp)),
+                                    contentScale = ContentScale.Crop,
+                                )
+                                Text(
+                                    "After",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (stop.servicedAt != null) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -692,7 +1017,7 @@ private fun StopCard(
     }
 }
 
-// ── Skip Reason Dialog ──────────────────────────────────────────────
+// -- Skip Reason Dialog -------------------------------------------------
 
 @Composable
 private fun SkipReasonDialog(
@@ -763,7 +1088,7 @@ private fun SkipReasonDialog(
     )
 }
 
-// ── Issue Report Dialog ─────────────────────────────────────────────
+// -- Issue Report Dialog ------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

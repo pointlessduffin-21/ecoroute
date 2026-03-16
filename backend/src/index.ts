@@ -27,6 +27,7 @@ import feedbackRoutes from "./routes/feedback";
 
 // Services
 import * as mqttService from "./services/mqtt";
+import * as routeScheduler from "./services/route-scheduler";
 
 // ─── App setup ────────────────────────────────────────────────────────────────
 
@@ -130,15 +131,25 @@ try {
   console.warn("MQTT service failed to start (non-fatal):", err);
 }
 
+// Start auto-route generation scheduler
+try {
+  routeScheduler.start();
+  console.log("Route scheduler service started");
+} catch (err) {
+  console.warn("Route scheduler failed to start (non-fatal):", err);
+}
+
 // Graceful shutdown
 process.on("SIGINT", async () => {
   console.log("\nShutting down...");
+  routeScheduler.stop();
   await mqttService.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   console.log("\nShutting down...");
+  routeScheduler.stop();
   await mqttService.stop();
   process.exit(0);
 });

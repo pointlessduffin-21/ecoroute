@@ -1,7 +1,12 @@
 package com.ecoroute.app.data.repository
 
+import android.content.Context
+import android.net.Uri
 import com.ecoroute.app.data.model.*
 import com.ecoroute.app.data.remote.ApiService
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -187,6 +192,53 @@ class EcoRouteRepository @Inject constructor(
     suspend fun generateRoute(subdivisionId: String): Result<CollectionRoute> {
         return try {
             handleResponse(api.generateRoute(mapOf("subdivisionId" to subdivisionId)))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun uploadStopPhoto(
+        routeId: String,
+        stopId: String,
+        photoUri: Uri,
+        type: String,
+        context: Context,
+    ): Result<String> {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(photoUri)
+            val bytes = inputStream?.readBytes() ?: throw Exception("Cannot read photo")
+            inputStream.close()
+
+            val requestFile = bytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+            val photoPart = MultipartBody.Part.createFormData("photo", "photo.jpg", requestFile)
+            val typePart = type.toRequestBody("text/plain".toMediaTypeOrNull())
+
+            val response = api.uploadStopPhoto(routeId, stopId, photoPart, typePart)
+            if (response.isSuccessful) {
+                Result.success(response.body()?.data?.photoUrl ?: "")
+            } else {
+                Result.failure(Exception("Upload failed: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun reportStopIssue(
+        routeId: String,
+        stopId: String,
+        severity: String,
+        description: String,
+        photoUrl: String? = null,
+    ): Result<Any> {
+        return try {
+            val request = ReportIssueRequest(severity, description, photoUrl)
+            val response = api.reportStopIssue(routeId, stopId, request)
+            if (response.isSuccessful) {
+                Result.success(response.body()?.data ?: Any())
+            } else {
+                Result.failure(Exception("Report failed: ${response.code()}"))
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
