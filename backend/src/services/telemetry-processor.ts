@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getDb } from "../config/database";
 import { smartBins, binTelemetry, alerts } from "../db/schema";
 import { eq } from "drizzle-orm";
+import { eventBus } from "./event-bus";
 
 // ─── Shared validation schema for device telemetry ──────────────────────────
 
@@ -129,6 +130,32 @@ export async function processTelemetry(
     });
     alertsCreated.push("sensor_anomaly");
     console.info(`[telemetry] Sensor anomaly alert created for ${deviceCode} (distance: ${data.distanceCm} cm)`);
+  }
+
+  // Emit real-time events
+  eventBus.emit("sse", {
+    type: "telemetry",
+    data: {
+      deviceId: bin.id,
+      deviceCode,
+      fillLevelPercent: data.fillLevelPercent,
+      batteryVoltage: data.batteryVoltage,
+      signalStrength: data.signalStrength,
+      recordedAt: new Date().toISOString(),
+    },
+  });
+
+  for (const alertType of alertsCreated) {
+    eventBus.emit("sse", {
+      type: "alert",
+      data: {
+        deviceId: bin.id,
+        deviceCode,
+        alertType,
+        message: `Bin ${deviceCode}: ${alertType}`,
+        createdAt: new Date().toISOString(),
+      },
+    });
   }
 
   return { success: true, telemetryId: created.id, alertsCreated };

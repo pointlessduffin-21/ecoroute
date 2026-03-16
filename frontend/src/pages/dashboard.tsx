@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { useSSE } from "@/hooks/use-sse";
 import type { DashboardStats, Alert, FillLevelDistribution, SmartBin, BinTelemetry, PaginatedResponse } from "@/types/api";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -118,6 +119,7 @@ function timeAgo(dateStr: string): string {
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  useSSE();
 
   const {
     data: stats,
