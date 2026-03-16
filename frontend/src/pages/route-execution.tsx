@@ -1057,14 +1057,19 @@ function RouteReport({
                   {/* Photo proof thumbnail (before/after from route execution) */}
                   {stop.photoProofUrl && (
                     <div className="mb-2">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">
-                        Collection Evidence
-                      </p>
-                      <img
-                        src={stop.photoProofUrl}
-                        alt={`Proof for stop ${stop.sequenceOrder}`}
-                        className="h-24 w-auto rounded-md border border-border object-cover"
-                      />
+                      <p className="text-xs font-medium text-muted-foreground mb-1.5">Collection Evidence</p>
+                      <div className="flex gap-3">
+                        {stop.photoProofUrl.split("|").map((url: string, i: number) => (
+                          <div key={i} className="space-y-1">
+                            <p className="text-[10px] font-medium text-muted-foreground">{i === 0 ? "Before" : "After"}</p>
+                            <img
+                              src={url.trim()}
+                              alt={`${i === 0 ? "Before" : "After"} collection`}
+                              className="h-28 w-auto rounded-md border border-border object-cover"
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -1452,11 +1457,18 @@ function StopCard({
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Photo Proof
               </p>
-              <img
-                src={stop.photoProofUrl}
-                alt="Service proof"
-                className="h-32 w-auto rounded-md border border-border object-cover"
-              />
+              <div className="flex gap-3">
+                {stop.photoProofUrl.split("|").map((url: string, i: number) => (
+                  <div key={i} className="space-y-1">
+                    <p className="text-[10px] font-medium text-muted-foreground">{i === 0 ? "Before" : "After"}</p>
+                    <img
+                      src={url.trim()}
+                      alt={`${i === 0 ? "Before" : "After"} collection`}
+                      className="h-28 w-auto rounded-md border border-border object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

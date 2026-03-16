@@ -1044,7 +1044,8 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
         await db.update(routeStops).set({
           status: "serviced",
           servicedAt: new Date(),
-          notes: "Simulation: Collected waste, reported lid damage for maintenance"
+          notes: "Simulation: Collected waste, reported lid damage for maintenance",
+          photoProofUrl: "/uploads/placeholders/before.svg|/uploads/placeholders/after.svg",
         }).where(eq(routeStops.id, stop.id));
         log(stepBase + 2, "service", `Serviced Stop #${i + 1} — ${bin.deviceCode} (with issue reported)`);
       } else {
@@ -1052,7 +1053,8 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
         await db.update(routeStops).set({
           status: "serviced",
           servicedAt: new Date(),
-          notes: `Simulation: Normal collection, bin was at ${fill}%`
+          notes: `Simulation: Normal collection, bin was at ${fill}%`,
+          photoProofUrl: "/uploads/placeholders/before.svg|/uploads/placeholders/after.svg",
         }).where(eq(routeStops.id, stop.id));
         log(stepBase + 1, "service", `Serviced Stop #${i + 1} — ${bin.deviceCode} (${fill}% fill collected)`);
       }
