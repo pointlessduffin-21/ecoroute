@@ -25,8 +25,8 @@ const updateSubdivisionSchema = createSubdivisionSchema.partial();
 app.get("/", async (c) => {
   const user = c.get("user");
 
-  if (user.role !== "admin") {
-    return c.json({ error: "Forbidden: admin access required" }, 403);
+  if (user.role !== "admin" && user.role !== "dispatcher") {
+    return c.json({ error: "Forbidden: admin or dispatcher access required" }, 403);
   }
 
   const limit = Math.min(Number(c.req.query("limit") || "20"), 100);
