@@ -23,6 +23,10 @@ import {
   Zap,
   Clock,
   RefreshCw,
+  Brain,
+  Target,
+  Activity,
+  CheckCircle,
 } from "lucide-react";
 import {
   LineChart,
@@ -335,6 +339,41 @@ export function AnalyticsPage() {
         // No cached predictions
       });
   }, []);
+
+  // ---- Model Training state ----
+  const trainMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post<{ data: { status: string; loss: number | null; best_loss: number | null; epochs: number; num_samples: number; num_sequences: number | null; model_version: string; reason?: string } }>("/ai/train");
+      return res.data.data;
+    },
+  });
+
+  // ---- Model Accuracy state ----
+  const [evaluationData, setEvaluationData] = useState<{
+    mae: number;
+    rmse: number;
+    totalPredictions: number;
+    matchedPredictions: number;
+    perDevice: { device: string; mae: number; samples: number }[];
+    modelVersion: string;
+  } | null>(null);
+
+  const evaluateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.get<{ data: { mae: number; rmse: number; total_predictions: number; matched_predictions: number; per_device: { device: string; mae: number; samples: number }[]; model_version: string } }>("/ai/evaluate");
+      return res.data.data;
+    },
+    onSuccess: (data) => {
+      setEvaluationData({
+        mae: data.mae,
+        rmse: data.rmse,
+        totalPredictions: data.total_predictions,
+        matchedPredictions: data.matched_predictions,
+        perDevice: data.per_device,
+        modelVersion: data.model_version,
+      });
+    },
+  });
 
   const predictionMutation = useMutation({
     mutationFn: async () => {
@@ -701,6 +740,162 @@ export function AnalyticsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ---- Model Training & Accuracy Panel ---- */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Train Model Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-violet-500" />
+              <div>
+                <CardTitle className="text-base">Model Training</CardTitle>
+                <CardDescription>
+                  Train the fill-level prediction model on historical telemetry
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button
+              onClick={() => trainMutation.mutate()}
+              disabled={trainMutation.isPending}
+              className="w-full"
+            >
+              {trainMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Training Model...
+                </>
+              ) : (
+                <>
+                  <Brain className="mr-2 h-4 w-4" />
+                  Train Model
+                </>
+              )}
+            </Button>
+
+            {trainMutation.isSuccess && trainMutation.data && (
+              <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span className="text-sm font-medium text-green-800">
+                    {trainMutation.data.status === "completed" ? "Training Complete" : "Training Skipped"}
+                  </span>
+                </div>
+                {trainMutation.data.status === "completed" ? (
+                  <div className="grid grid-cols-2 gap-2 text-xs text-green-700">
+                    <div>Loss: <span className="font-mono font-medium">{trainMutation.data.loss?.toFixed(6)}</span></div>
+                    <div>Best Loss: <span className="font-mono font-medium">{trainMutation.data.best_loss?.toFixed(6)}</span></div>
+                    <div>Epochs: <span className="font-medium">{trainMutation.data.epochs}</span></div>
+                    <div>Samples: <span className="font-medium">{trainMutation.data.num_samples?.toLocaleString()}</span></div>
+                    <div className="col-span-2">Sequences: <span className="font-medium">{trainMutation.data.num_sequences?.toLocaleString()}</span></div>
+                    <div className="col-span-2">Version: <span className="font-mono font-medium">{trainMutation.data.model_version}</span></div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-green-700">{trainMutation.data.reason}</p>
+                )}
+              </div>
+            )}
+
+            {trainMutation.isError && (
+              <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                  <p className="text-sm text-destructive">Training failed. Check AI service logs.</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Model Accuracy Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Target className="h-5 w-5 text-emerald-500" />
+              <div>
+                <CardTitle className="text-base">Prediction Accuracy</CardTitle>
+                <CardDescription>
+                  Predicted vs actual fill levels (MAE / RMSE)
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button
+              onClick={() => evaluateMutation.mutate()}
+              disabled={evaluateMutation.isPending}
+              variant="outline"
+              className="w-full"
+            >
+              {evaluateMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Evaluating...
+                </>
+              ) : (
+                <>
+                  <Activity className="mr-2 h-4 w-4" />
+                  Evaluate Model
+                </>
+              )}
+            </Button>
+
+            {evaluationData && !evaluateMutation.isPending && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border p-3 text-center">
+                    <p className="text-2xl font-bold text-emerald-600">{evaluationData.mae.toFixed(2)}%</p>
+                    <p className="text-xs text-muted-foreground">MAE</p>
+                  </div>
+                  <div className="rounded-lg border p-3 text-center">
+                    <p className="text-2xl font-bold text-blue-600">{evaluationData.rmse.toFixed(2)}%</p>
+                    <p className="text-xs text-muted-foreground">RMSE</p>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground text-center">
+                  {evaluationData.matchedPredictions} matched pairs | Model: {evaluationData.modelVersion}
+                </div>
+                {evaluationData.perDevice.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="pb-2 pr-3 font-medium text-muted-foreground">Device</th>
+                          <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">MAE</th>
+                          <th className="pb-2 font-medium text-muted-foreground text-right">Samples</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {evaluationData.perDevice.map((d) => (
+                          <tr key={d.device}>
+                            <td className="py-1.5 pr-3 font-mono">{d.device}</td>
+                            <td className="py-1.5 pr-3 text-right font-medium">{d.mae.toFixed(2)}%</td>
+                            <td className="py-1.5 text-right text-muted-foreground">{d.samples}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {evaluateMutation.isError && !evaluationData && (
+              <div className="flex items-center justify-center py-4 text-muted-foreground">
+                <p className="text-sm">No prediction-actual pairs found. Run predictions first, then wait for new telemetry.</p>
+              </div>
+            )}
+
+            {!evaluationData && !evaluateMutation.isPending && !evaluateMutation.isError && (
+              <div className="flex items-center justify-center py-4 text-muted-foreground">
+                <p className="text-sm">Click "Evaluate Model" to compare predictions vs actuals.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* ---- Row 1: Line charts ---- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

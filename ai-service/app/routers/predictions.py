@@ -1,5 +1,6 @@
 import logging
-from typing import Optional
+from collections import defaultdict
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -51,6 +52,15 @@ class StoredPrediction(BaseModel):
     confidence_score: float
     model_version: str
     predicted_at: Optional[str] = None
+
+
+class EvaluationMetrics(BaseModel):
+    mae: float  # Mean Absolute Error
+    rmse: float  # Root Mean Squared Error
+    total_predictions: int
+    matched_predictions: int  # predictions that had a corresponding actual reading
+    per_device: list[dict[str, Any]]  # per-device breakdown
+    model_version: str
 
 
 @router.post("/predict/all", response_model=AllPredictionsResponse)
@@ -206,3 +216,63 @@ async def get_predictions(device_id: str, limit: int = 10):
         )
 
     return results
+
+
+@router.get("/evaluate", response_model=EvaluationMetrics)
+async def evaluate_model():
+    """
+    Evaluate prediction accuracy by comparing predictions against actual readings.
+
+    Joins fill_prediction rows with the nearest subsequent bin_telemetry reading
+    (within a 2-hour window) and computes MAE, RMSE, and per-device error metrics.
+    Useful for demonstrating model performance to capstone panelists.
+    """
+    pairs = data_service.get_prediction_accuracy(limit=500)
+
+    if not pairs:
+        raise HTTPException(
+            status_code=404,
+            detail="No matched prediction-actual pairs found. "
+            "Predictions need at least one subsequent telemetry reading within 2 hours.",
+        )
+
+    # Calculate overall metrics
+    errors = [
+        abs(float(p["predicted_fill_percent"]) - float(p["actual_fill_percent"]))
+        for p in pairs
+    ]
+    squared_errors = [
+        (float(p["predicted_fill_percent"]) - float(p["actual_fill_percent"])) ** 2
+        for p in pairs
+    ]
+
+    mae = sum(errors) / len(errors)
+    rmse = (sum(squared_errors) / len(squared_errors)) ** 0.5
+
+    # Per-device breakdown
+    device_errors: dict[str, list[float]] = defaultdict(list)
+    for p in pairs:
+        device_key = p.get("device_code") or str(p["device_id"])
+        device_errors[device_key].append(
+            abs(float(p["predicted_fill_percent"]) - float(p["actual_fill_percent"]))
+        )
+
+    per_device = [
+        {
+            "device": device,
+            "mae": round(sum(errs) / len(errs), 2),
+            "samples": len(errs),
+        }
+        for device, errs in device_errors.items()
+    ]
+
+    model_version = pairs[0].get("model_version", "unknown")
+
+    return EvaluationMetrics(
+        mae=round(mae, 2),
+        rmse=round(rmse, 2),
+        total_predictions=len(pairs),
+        matched_predictions=len(pairs),
+        per_device=per_device,
+        model_version=model_version,
+    )

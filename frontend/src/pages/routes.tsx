@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { useSSE } from "@/hooks/use-sse";
 import type {
   CollectionRoute,
   RouteStop,
@@ -478,6 +479,9 @@ function GenerateRouteModal({
 export function RoutesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+
+  // Real-time SSE: auto-refreshes route data on route_update events
+  useSSE();
   const [statusFilter, setStatusFilter] = useState<RouteStatus | "all">("all");
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [showGenerateModal, setShowGenerateModal] = useState(false);

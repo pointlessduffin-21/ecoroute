@@ -323,6 +323,40 @@ app.post("/train", async (c) => {
   }
 });
 
+// ─── GET /evaluate — Proxy to Python AI service for model evaluation ────────
+
+app.get("/evaluate", async (c) => {
+  try {
+    const aiServiceUrl = env.AI_SERVICE_URL;
+    const response = await fetch(`${aiServiceUrl}/evaluate`, {
+      method: "GET",
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      return c.json(
+        {
+          error: "AI service evaluation failed",
+          details: errorBody,
+          statusCode: response.status,
+        },
+        response.status as 400 | 500 | 502 | 503
+      );
+    }
+
+    const data = await response.json();
+    return c.json({ data });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to reach AI service";
+    console.error("[ai-evaluate] Error:", message);
+    return c.json(
+      { error: "AI service unavailable", details: message },
+      502
+    );
+  }
+});
+
 // ─── POST /verify-collection — AI photo verification of bin collection ──────
 
 const verifyCollectionSchema = z.object({

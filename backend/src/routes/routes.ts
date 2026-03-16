@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, and, desc, sql, gte, lte, inArray } from "drizzle-orm";
 import { getDb } from "../config/database";
+import { eventBus } from "../services/event-bus";
 import {
   collectionRoutes,
   routeStops,
@@ -449,6 +450,16 @@ app.patch("/:id/status", async (c) => {
   if (!updated) {
     return c.json({ error: "Route not found" }, 404);
   }
+
+  // Emit SSE event so connected clients see the status change in real-time
+  eventBus.emit("sse", {
+    type: "route_update" as const,
+    data: {
+      routeId: updated.id,
+      status: updated.status,
+      subdivisionId: updated.subdivisionId,
+    },
+  });
 
   return c.json({ data: updated });
 });

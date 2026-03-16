@@ -267,6 +267,54 @@ def save_prediction(
         return False
 
 
+def get_prediction_accuracy(limit: int = 500) -> list[dict]:
+    """
+    Join fill_prediction with the nearest subsequent bin_telemetry reading
+    to compare predicted vs actual fill levels.
+
+    For each prediction, finds the closest actual telemetry reading that
+    occurred within 2 hours after the prediction timestamp.
+    """
+    query = """
+        SELECT
+            fp.device_id,
+            fp.predicted_fill_percent,
+            fp.confidence_score,
+            fp.model_version,
+            fp.predicted_at,
+            bt.fill_level_percent AS actual_fill_percent,
+            bt.recorded_at AS actual_recorded_at,
+            sb.device_code
+        FROM fill_prediction fp
+        INNER JOIN LATERAL (
+            SELECT bt2.fill_level_percent, bt2.recorded_at
+            FROM bin_telemetry bt2
+            WHERE bt2.device_id = fp.device_id
+              AND bt2.recorded_at > fp.predicted_at
+              AND bt2.recorded_at <= fp.predicted_at + INTERVAL '2 hours'
+            ORDER BY bt2.recorded_at ASC
+            LIMIT 1
+        ) bt ON true
+        LEFT JOIN smart_bin sb ON sb.id = fp.device_id
+        ORDER BY fp.predicted_at DESC
+        LIMIT %s
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(query, (limit,))
+                rows = cur.fetchall()
+                records = [dict(row) for row in rows]
+                logger.info(
+                    "Fetched %d prediction-actual pairs for evaluation",
+                    len(records),
+                )
+                return records
+    except Exception as e:
+        logger.error("Failed to fetch prediction accuracy data: %s", str(e))
+        return []
+
+
 def get_latest_predictions(device_id: str, limit: int = 10) -> list[dict]:
     """Get the most recent predictions for a device."""
     query = """
