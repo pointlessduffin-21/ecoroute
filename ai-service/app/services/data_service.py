@@ -74,7 +74,11 @@ def get_telemetry_for_device(device_id: str, limit: int = 100) -> list[dict]:
 
 
 def get_all_telemetry(limit: int = 10000) -> list[dict]:
-    """Fetch all telemetry readings across all devices for model training."""
+    """Fetch all telemetry readings across all devices for model training.
+
+    Orders by device_id first so that records for the same bin are contiguous,
+    then by recorded_at within each device for correct time-series sequencing.
+    """
     query = """
         SELECT
             bt.device_id,
@@ -84,7 +88,7 @@ def get_all_telemetry(limit: int = 10000) -> list[dict]:
             bt.signal_strength,
             bt.recorded_at
         FROM bin_telemetry bt
-        ORDER BY bt.recorded_at ASC
+        ORDER BY bt.device_id, bt.recorded_at ASC
         LIMIT %s
     """
     try:
