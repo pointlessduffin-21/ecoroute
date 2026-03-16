@@ -147,11 +147,11 @@ async function tick() {
           signal: AbortSignal.timeout(10000),
         });
         if (response.ok) {
-          const data = await response.json();
+          const data = await response.json() as { routes?: { stops?: { bin_id: string }[] }[] };
           if (data.routes?.[0]?.stops) {
-            const stopOrder = data.routes[0].stops.map((s: any) => s.bin_id);
+            const stopOrder = data.routes[0].stops.map((s) => s.bin_id);
             const binMap = new Map(hotBins.map(b => [b.id, b]));
-            const reordered = stopOrder.map((id: string) => binMap.get(id)).filter(Boolean);
+            const reordered = stopOrder.map((id: string) => binMap.get(id)).filter((b): b is NonNullable<typeof b> => !!b);
             if (reordered.length > 0) {
               orderedBins = reordered;
               optimizedBy = "ai";

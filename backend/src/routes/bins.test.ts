@@ -42,7 +42,7 @@ describe("Smart Bins API Routes", () => {
         c.set("user", {
           id: "test-user-id",
           email: "test@ecoroute.io",
-          role: roleHeader as "admin" | "dispatcher" | "driver",
+          role: roleHeader as "admin" | "dispatcher" | "maintenance",
           subdivisionId: "test-sub-id",
           fullName: "Test User"
         });

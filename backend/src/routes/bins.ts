@@ -380,7 +380,7 @@ app.post("/mqtt-test", requireRole("admin", "dispatcher"), async (c) => {
   const { broker, port, topic } = parsed.data;
   const brokerUrl = `mqtt://${broker}:${port}`;
 
-  return new Promise((resolve) => {
+  return new Promise<Response>((resolve) => {
     const timeout = 15000; // 15 seconds
     let done = false;
 

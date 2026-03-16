@@ -158,5 +158,5 @@ export async function processTelemetry(
     });
   }
 
-  return { success: true, telemetryId: created.id, alertsCreated };
+  return { success: true, telemetryId: created!.id, alertsCreated };
 }

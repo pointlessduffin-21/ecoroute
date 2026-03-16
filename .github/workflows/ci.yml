@@ -29,7 +29,6 @@ jobs:
   backend:
     name: Backend Type Check
     runs-on: ubuntu-latest
-    continue-on-error: true # pre-existing TS errors in codebase — advisory only
     defaults:
       run:
         working-directory: backend
