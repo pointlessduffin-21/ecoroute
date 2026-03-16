@@ -49,15 +49,14 @@ class LSTMPredictor:
         )
 
     def _extract_features(self, records: list[dict]) -> np.ndarray:
-        """Extract feature matrix from telemetry records."""
+        """Extract feature matrix from telemetry records.
+
+        Uses FEATURE_COLUMNS to guarantee consistent column ordering
+        between training and prediction. Handles NULL DB values safely.
+        """
         features = []
         for record in records:
-            row = [
-                float(record.get("fill_level_percent", 0.0)),
-                float(record.get("distance_cm", 0.0)),
-                float(record.get("battery_voltage", 0.0)),
-                float(record.get("signal_strength", 0.0)),
-            ]
+            row = [float(record.get(col) or 0.0) for col in FEATURE_COLUMNS]
             features.append(row)
         return np.array(features, dtype=np.float32)
 
@@ -103,12 +102,37 @@ class LSTMPredictor:
             }
 
         features = self._extract_features(telemetry_data)
+
+        # Guard against NaN values from bad sensor data
+        if np.isnan(features).any():
+            nan_count = int(np.isnan(features).sum())
+            logger.warning("Found %d NaN values in features, replacing with 0", nan_count)
+            features = np.nan_to_num(features, nan=0.0)
+
         self.scaler.fit(features)
         normalized = self.scaler.transform(features)
 
-        X, y = self._create_sequences(normalized, self.sequence_length)
+        # Group sequences by device_id to avoid cross-device sliding windows.
+        # Without this, a window could span the last readings of bin A and
+        # the first readings of bin B, creating impossible state transitions.
+        X_all: list[np.ndarray] = []
+        y_all: list[np.ndarray] = []
 
-        if len(X) == 0:
+        device_groups: dict[str, list[int]] = {}
+        for i, record in enumerate(telemetry_data):
+            device_id = record.get("device_id", "unknown")
+            device_groups.setdefault(device_id, []).append(i)
+
+        for device_id, indices in device_groups.items():
+            if len(indices) < self.sequence_length + 1:
+                continue
+            device_data = normalized[indices]
+            X_dev, y_dev = self._create_sequences(device_data, self.sequence_length)
+            if len(X_dev) > 0:
+                X_all.append(X_dev)
+                y_all.append(y_dev)
+
+        if not X_all:
             return {
                 "status": "skipped",
                 "reason": "Could not create any training sequences",
@@ -118,11 +142,14 @@ class LSTMPredictor:
                 "model_version": self.model_version,
             }
 
+        X = np.concatenate(X_all)
+        y = np.concatenate(y_all)
+
         self._initialize_model()
 
         logger.info(
-            "Training MLP on %d sequences (window=%d, features=%d, input_dim=%d)",
-            len(X), self.sequence_length, INPUT_SIZE, X.shape[1],
+            "Training MLP on %d sequences from %d devices (window=%d, features=%d, input_dim=%d)",
+            len(X), len(device_groups), self.sequence_length, INPUT_SIZE, X.shape[1],
         )
 
         self.model.fit(X, y)
@@ -183,11 +210,14 @@ class LSTMPredictor:
         input_vector = normalized.flatten().reshape(1, -1)
         predicted_normalized = float(self.model.predict(input_vector)[0])
 
-        # Denormalize: reconstruct a dummy row to inverse-transform the fill level
-        dummy = np.zeros((1, INPUT_SIZE), dtype=np.float32)
-        dummy[0, 0] = predicted_normalized
-        denormalized = self.scaler.inverse_transform(dummy)
-        predicted_fill = float(np.clip(denormalized[0, 0], 0.0, 100.0))
+        # Denormalize: manually reverse MinMaxScaler for the fill_level column only.
+        # This avoids the fragile dummy-array approach that depends on inverse_transform
+        # being column-independent.
+        fill_min = float(self.scaler.data_min_[0])
+        fill_max = float(self.scaler.data_max_[0])
+        predicted_fill = float(np.clip(
+            predicted_normalized * (fill_max - fill_min) + fill_min, 0.0, 100.0
+        ))
 
         time_to_threshold = self._calculate_time_to_threshold(readings, predicted_fill)
         confidence = self._calculate_confidence(readings, predicted_fill)
@@ -243,15 +273,15 @@ class LSTMPredictor:
         current_fill = fill_levels[-1]
 
         if len(timestamps) >= 2:
-            avg_interval_minutes = (
-                (timestamps[-1] - timestamps[0]).total_seconds()
-                / 60.0
-                / max(len(timestamps) - 1, 1)
+            # Use the last interval to project forward — more accurate than
+            # the average when reading frequency varies (e.g. catch-up reads).
+            last_interval_minutes = max(
+                (timestamps[-1] - timestamps[-2]).total_seconds() / 60.0, 1.0
             )
         else:
-            avg_interval_minutes = 15.0
+            last_interval_minutes = 15.0
 
-        predicted_fill = current_fill + fill_rate_per_minute * avg_interval_minutes
+        predicted_fill = current_fill + fill_rate_per_minute * last_interval_minutes
         predicted_fill = float(np.clip(predicted_fill, 0.0, 100.0))
 
         time_to_threshold = self._calculate_time_to_threshold_linear(
