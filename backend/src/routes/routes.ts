@@ -11,7 +11,7 @@ import {
   alerts,
   binTelemetry,
 } from "../db/schema";
-import { env } from "../config/env";
+import { optimizeRoute } from "../services/route-optimizer";
 import { requireRole } from "../middleware/rbac";
 import type { AppVariables } from "../types/context";
 import { mkdirSync, writeFileSync } from "fs";
@@ -245,7 +245,7 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
 
   const db = getDb();
 
-  // 1. Resolve depot coordinates: prefer request body, fall back to system_config, then Manila default
+  // 1. Resolve depot coordinates
   let depotLat = parsed.data.depotLat ?? 14.5995;
   let depotLng = parsed.data.depotLng ?? 120.9842;
 
@@ -272,130 +272,14 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
     }
   }
 
-  // 2. Call the Python AI service for CVRP optimization
-  const aiServiceUrl = env.AI_SERVICE_URL;
-
-  let optimizationResult: {
-    routes?: Array<{
-      vehicle_id: number;
-      stops: Array<{
-        device_id: string;
-        device_code?: string;
-        latitude: number;
-        longitude: number;
-        sequence: number;
-      }>;
-      distance_km?: number;
-      duration_minutes?: number;
-    }>;
-    total_distance_km?: number;
-    total_duration_minutes?: number;
-    estimated_duration_minutes?: number;
-    optimization_score?: number;
-    route_geojson?: unknown;
-    error?: string;
-  } | null = null;
-
-  let usedAIService = false;
-
-  try {
-    const optimizeResponse = await fetch(`${aiServiceUrl}/optimize`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subdivision_id: parsed.data.subdivisionId,
-        depot: {
-          latitude: depotLat,
-          longitude: depotLng,
-        },
-        num_vehicles: parsed.data.numVehicles,
-        vehicle_capacity_liters: parsed.data.vehicleCapacityLiters,
-        threshold_percent: parsed.data.fillThreshold,
-        include_predicted: parsed.data.includePredicted,
-        avoid_highways: parsed.data.avoidHighways,
-        avoid_tolls: parsed.data.avoidTolls,
-      }),
-    });
-
-    if (optimizeResponse.ok) {
-      optimizationResult = await optimizeResponse.json() as typeof optimizationResult;
-      usedAIService = true;
-    } else {
-      console.warn(
-        `[route-generate] AI service returned ${optimizeResponse.status}, falling back to naive ordering`
-      );
-    }
-  } catch (err) {
-    console.warn(
-      "[route-generate] AI service unavailable, falling back to naive ordering:",
-      err instanceof Error ? err.message : err
-    );
-  }
-
-  // 3. If the AI service returned optimized routes, use them
-  if (usedAIService && optimizationResult?.routes && optimizationResult.routes.length > 0) {
-    const aiRoute = optimizationResult.routes[0]!;
-    const aiStops = aiRoute.stops || [];
-
-    // Create the collection_route record
-    const routeGeojsonStr = optimizationResult.route_geojson
-      ? JSON.stringify(optimizationResult.route_geojson)
-      : null;
-
-    const [route] = await db
-      .insert(collectionRoutes)
-      .values({
-        subdivisionId: parsed.data.subdivisionId,
-        assignedDriverId: parsed.data.assignedDriverId,
-        scheduledDate: parsed.data.scheduledDate
-          ? new Date(parsed.data.scheduledDate)
-          : new Date(),
-        optimizationScore: optimizationResult.optimization_score ?? null,
-        estimatedDistanceKm: aiRoute.distance_km ?? optimizationResult.total_distance_km ?? null,
-        estimatedDurationMinutes: aiRoute.duration_minutes ?? optimizationResult.estimated_duration_minutes ?? optimizationResult.total_duration_minutes ?? null,
-        routeGeojson: routeGeojsonStr,
-      })
-      .returning();
-
-    // Create route_stop records from the optimization result
-    let createdStops: typeof routeStops.$inferSelect[] = [];
-    if (aiStops.length > 0) {
-      createdStops = await db
-        .insert(routeStops)
-        .values(
-          aiStops.map((stop) => ({
-            routeId: route!.id,
-            deviceId: stop.device_id,
-            sequenceOrder: stop.sequence,
-          }))
-        )
-        .returning();
-    }
-
-    return c.json(
-      {
-        data: {
-          ...route,
-          stops: createdStops,
-          _meta: {
-            note: "Route generated via AI-powered CVRP optimization.",
-            binsConsidered: aiStops.length,
-            fillThreshold: parsed.data.fillThreshold,
-            optimizedBy: "ai-service",
-          },
-        },
-      },
-      201
-    );
-  }
-
-  // 4. Fallback: naive ordering when AI service is unavailable
+  // 2. Fetch active bins with latest fill level
   const bins = await db
     .select({
       id: smartBins.id,
       deviceCode: smartBins.deviceCode,
       latitude: smartBins.latitude,
       longitude: smartBins.longitude,
+      capacityLiters: smartBins.capacityLiters,
     })
     .from(smartBins)
     .where(
@@ -406,6 +290,47 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
     )
     .limit(parsed.data.maxStops);
 
+  // Get latest telemetry per bin
+  const binIds = bins.map((b) => b.id);
+  let telemetryMap: Record<string, number> = {};
+  if (binIds.length > 0) {
+    const telemetry = await db
+      .select({
+        deviceId: binTelemetry.deviceId,
+        fillLevelPercent: binTelemetry.fillLevelPercent,
+      })
+      .from(binTelemetry)
+      .where(inArray(binTelemetry.deviceId, binIds))
+      .orderBy(desc(binTelemetry.recordedAt));
+
+    for (const t of telemetry) {
+      if (!(t.deviceId in telemetryMap)) {
+        telemetryMap[t.deviceId] = t.fillLevelPercent;
+      }
+    }
+  }
+
+  const binsWithFill = bins.map((b) => ({
+    ...b,
+    fillLevelPercent: telemetryMap[b.id] ?? 0,
+  }));
+
+  // 3. Call unified optimizer (AI service with fallback)
+  const result = await optimizeRoute({
+    subdivisionId: parsed.data.subdivisionId,
+    depot: { latitude: depotLat, longitude: depotLng },
+    bins: binsWithFill,
+    numVehicles: parsed.data.numVehicles,
+    vehicleCapacityLiters: parsed.data.vehicleCapacityLiters,
+    thresholdPercent: parsed.data.fillThreshold,
+    includePredicted: parsed.data.includePredicted,
+    avoidHighways: parsed.data.avoidHighways,
+    avoidTolls: parsed.data.avoidTolls,
+  });
+
+  // 4. Persist route
+  const routeGeojsonStr = result.routeGeojson ? JSON.stringify(result.routeGeojson) : null;
+
   const [route] = await db
     .insert(collectionRoutes)
     .values({
@@ -414,21 +339,23 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
       scheduledDate: parsed.data.scheduledDate
         ? new Date(parsed.data.scheduledDate)
         : new Date(),
-      optimizationScore: null,
-      estimatedDistanceKm: bins.length * 1.2,
-      estimatedDurationMinutes: bins.length * 5,
+      optimizationScore: result.optimizationScore,
+      estimatedDistanceKm: result.totalDistanceKm,
+      estimatedDurationMinutes: result.estimatedDurationMinutes,
+      routeGeojson: routeGeojsonStr,
     })
     .returning();
 
+  // 5. Persist stops
   let createdStops: typeof routeStops.$inferSelect[] = [];
-  if (bins.length > 0) {
+  if (result.stops.length > 0) {
     createdStops = await db
       .insert(routeStops)
       .values(
-        bins.map((bin, index) => ({
+        result.stops.map((stop) => ({
           routeId: route!.id,
-          deviceId: bin.id,
-          sequenceOrder: index + 1,
+          deviceId: stop.deviceId,
+          sequenceOrder: stop.sequence,
         }))
       )
       .returning();
@@ -440,10 +367,9 @@ app.post("/generate", requireRole("admin", "dispatcher"), async (c) => {
         ...route,
         stops: createdStops,
         _meta: {
-          note: "Route generated with naive ordering. AI optimization service was unavailable.",
-          binsConsidered: bins.length,
+          binsConsidered: binsWithFill.length,
           fillThreshold: parsed.data.fillThreshold,
-          optimizedBy: "fallback",
+          optimizedBy: result.optimizedBy,
         },
       },
     },

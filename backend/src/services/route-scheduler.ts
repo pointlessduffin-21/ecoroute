@@ -6,9 +6,9 @@ import {
   routeStops,
   users,
   systemConfig,
-  subdivisions,
 } from "../db/schema";
 import { eq, and, desc, sql, gte, inArray } from "drizzle-orm";
+import { optimizeRoute } from "./route-optimizer";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -28,29 +28,6 @@ interface BinWithTelemetry {
   longitude: number;
   capacityLiters: number;
   fillLevelPercent: number;
-}
-
-interface OptimizedStop {
-  device_id: string;
-  device_code?: string;
-  latitude: number;
-  longitude: number;
-  sequence: number;
-}
-
-interface OptimizationResult {
-  routes?: Array<{
-    vehicle_id: number;
-    stops: OptimizedStop[];
-    distance_km?: number;
-    duration_minutes?: number;
-  }>;
-  total_distance_km?: number;
-  total_duration_minutes?: number;
-  estimated_duration_minutes?: number;
-  optimization_score?: number;
-  route_geojson?: unknown;
-  error?: string;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -170,54 +147,6 @@ async function findAvailableDriver(
 }
 
 /**
- * Call the AI service to get an optimized route, or return null on failure.
- */
-async function callAIOptimizer(
-  subdivisionId: string,
-  depot: { latitude: number; longitude: number },
-  bins: BinWithTelemetry[]
-): Promise<OptimizationResult | null> {
-  const aiUrl = process.env.AI_SERVICE_URL || "http://ai-service:8000";
-
-  try {
-    const response = await fetch(`${aiUrl}/optimize`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subdivision_id: subdivisionId,
-        depot,
-        bins: bins.map((b) => ({
-          device_id: b.id,
-          device_code: b.deviceCode,
-          latitude: b.latitude,
-          longitude: b.longitude,
-          fill_level_percent: b.fillLevelPercent,
-          capacity_liters: b.capacityLiters,
-        })),
-        num_vehicles: 1,
-        vehicle_capacity_liters: 1000,
-        threshold_percent: 80,
-      }),
-    });
-
-    if (response.ok) {
-      return (await response.json()) as OptimizationResult;
-    }
-
-    console.warn(
-      `[route-scheduler] AI service returned ${response.status} for subdivision ${subdivisionId}`
-    );
-    return null;
-  } catch (err) {
-    console.warn(
-      "[route-scheduler] AI service unavailable:",
-      err instanceof Error ? err.message : err
-    );
-    return null;
-  }
-}
-
-/**
  * Create a collection_route and route_stop records for a set of bins.
  */
 async function createRouteForSubdivision(
@@ -229,51 +158,18 @@ async function createRouteForSubdivision(
   const depot = await getDepotForSubdivision(subdivisionId);
   const driverId = await findAvailableDriver(subdivisionId);
 
-  // Attempt AI optimization
-  const aiResult = await callAIOptimizer(subdivisionId, depot, bins);
-
-  let routeGeojson: string | null = null;
-  let estimatedDistanceKm: number | null = null;
-  let estimatedDurationMinutes: number | null = null;
-  let optimizationScore: number | null = null;
-  let orderedStops: Array<{ deviceId: string; sequence: number }> = [];
-  let optimizedBy = "fallback";
-
-  if (
-    aiResult?.routes &&
-    aiResult.routes.length > 0 &&
-    aiResult.routes[0]!.stops.length > 0
-  ) {
-    // Use AI-optimized route
-    const aiRoute = aiResult.routes[0]!;
-    orderedStops = aiRoute.stops.map((s) => ({
-      deviceId: s.device_id,
-      sequence: s.sequence,
-    }));
-    routeGeojson = aiResult.route_geojson
-      ? JSON.stringify(aiResult.route_geojson)
-      : null;
-    estimatedDistanceKm =
-      aiRoute.distance_km ?? aiResult.total_distance_km ?? null;
-    estimatedDurationMinutes =
-      aiRoute.duration_minutes ??
-      aiResult.estimated_duration_minutes ??
-      aiResult.total_duration_minutes ??
-      null;
-    optimizationScore = aiResult.optimization_score ?? null;
-    optimizedBy = "ai-service";
-  } else {
-    // Fallback: order by fill level descending (most full first)
-    const sorted = [...bins].sort(
-      (a, b) => b.fillLevelPercent - a.fillLevelPercent
-    );
-    orderedStops = sorted.map((b, i) => ({
-      deviceId: b.id,
-      sequence: i + 1,
-    }));
-    estimatedDistanceKm = bins.length * 1.2;
-    estimatedDurationMinutes = bins.length * 5;
-  }
+  const result = await optimizeRoute({
+    subdivisionId,
+    depot,
+    bins: bins.map((b) => ({
+      id: b.id,
+      deviceCode: b.deviceCode,
+      latitude: b.latitude,
+      longitude: b.longitude,
+      fillLevelPercent: b.fillLevelPercent,
+      capacityLiters: b.capacityLiters,
+    })),
+  });
 
   // Create collection_route record
   const [route] = await db
@@ -282,10 +178,10 @@ async function createRouteForSubdivision(
       subdivisionId,
       assignedDriverId: driverId,
       scheduledDate: new Date(),
-      optimizationScore,
-      estimatedDistanceKm,
-      estimatedDurationMinutes,
-      routeGeojson,
+      optimizationScore: result.optimizationScore,
+      estimatedDistanceKm: result.totalDistanceKm,
+      estimatedDurationMinutes: result.estimatedDurationMinutes,
+      routeGeojson: result.routeGeojson ? JSON.stringify(result.routeGeojson) : null,
     })
     .returning();
 
@@ -297,9 +193,9 @@ async function createRouteForSubdivision(
   }
 
   // Create route_stop records
-  if (orderedStops.length > 0) {
+  if (result.stops.length > 0) {
     await db.insert(routeStops).values(
-      orderedStops.map((stop) => ({
+      result.stops.map((stop) => ({
         routeId: route.id,
         deviceId: stop.deviceId,
         sequenceOrder: stop.sequence,
@@ -309,7 +205,7 @@ async function createRouteForSubdivision(
 
   console.info(
     `[route-scheduler] Created route ${route.id} for subdivision ${subdivisionId} ` +
-      `with ${orderedStops.length} stops (optimizedBy: ${optimizedBy}` +
+      `with ${result.stops.length} stops (optimizedBy: ${result.optimizedBy}` +
       `${driverId ? `, assignedTo: ${driverId}` : ""})`
   );
 }
