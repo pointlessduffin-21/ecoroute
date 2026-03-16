@@ -10,15 +10,15 @@ export interface SSEEvent {
 // ─── Event Bus ───────────────────────────────────────────────────────────────
 
 class EventBus extends EventEmitter {
-  emit(event: "sse", payload: SSEEvent): boolean {
+  override emit(event: "sse", payload: SSEEvent): boolean {
     return super.emit(event, payload);
   }
 
-  on(event: "sse", listener: (payload: SSEEvent) => void): this {
+  override on(event: "sse", listener: (payload: SSEEvent) => void): this {
     return super.on(event, listener);
   }
 
-  off(event: "sse", listener: (payload: SSEEvent) => void): this {
+  override off(event: "sse", listener: (payload: SSEEvent) => void): this {
     return super.off(event, listener);
   }
 }
