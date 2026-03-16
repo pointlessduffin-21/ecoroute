@@ -1022,6 +1022,7 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
 
     // Step 5: Start route
     await db.update(collectionRoutes).set({ status: "in_progress", startedAt: new Date() }).where(eq(collectionRoutes.id, route!.id));
+    eventBus.emit("sse", { type: "route_update" as const, data: { routeId: route!.id, status: "in_progress", subdivisionId } });
     log(5, "start_route", "Route started — driver en route to first stop");
 
     // Step 6-N: Execute each stop
@@ -1074,6 +1075,7 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
     // Complete route
     const completedAt = new Date();
     await db.update(collectionRoutes).set({ status: "completed", completedAt }).where(eq(collectionRoutes.id, route!.id));
+    eventBus.emit("sse", { type: "route_update" as const, data: { routeId: route!.id, status: "completed", subdivisionId } });
 
     const finalStep = 6 + (stopRecords.length * 3);
     const servicedCount = stopRecords.length - (hotBins.length > 2 ? 1 : 0);
