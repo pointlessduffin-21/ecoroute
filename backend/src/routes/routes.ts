@@ -9,6 +9,7 @@ import {
   systemConfig,
   serviceEvents,
   alerts,
+  binTelemetry,
 } from "../db/schema";
 import { env } from "../config/env";
 import { requireRole } from "../middleware/rbac";
@@ -918,6 +919,149 @@ app.get("/:id/report", async (c) => {
   };
 
   return c.json({ data: report });
+});
+
+// ─── POST /simulate — Run full end-to-end route execution simulation ────────
+
+app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
+  const db = getDb();
+  const user = c.get("user");
+  const events: { step: number; action: string; detail: string; timestamp: string }[] = [];
+
+  function log(step: number, action: string, detail: string) {
+    events.push({ step, action, detail, timestamp: new Date().toISOString() });
+  }
+
+  try {
+    // Step 1: Find bins above threshold
+    const allBins = await db.select().from(smartBins).where(eq(smartBins.status, "active"));
+    const binIds = allBins.map(b => b.id);
+
+    if (binIds.length === 0) {
+      return c.json({ success: false, error: "No active bins found" }, 400);
+    }
+
+    // Get latest telemetry
+    const allTelemetry = await db.select().from(binTelemetry)
+      .where(inArray(binTelemetry.deviceId, binIds))
+      .orderBy(desc(binTelemetry.recordedAt));
+
+    const telemetryMap: Record<string, typeof binTelemetry.$inferSelect> = {};
+    for (const t of allTelemetry) {
+      if (!telemetryMap[t.deviceId]) telemetryMap[t.deviceId] = t;
+    }
+
+    // Find bins above 50% for simulation (lower threshold to ensure we get some)
+    const hotBins = allBins.filter(b => {
+      const t = telemetryMap[b.id];
+      return t && t.fillLevelPercent >= 50;
+    }).slice(0, 4); // Max 4 stops for simulation
+
+    if (hotBins.length === 0) {
+      // If no bins above 50%, just pick the first 3
+      hotBins.push(...allBins.slice(0, 3));
+    }
+
+    log(1, "scan", `Found ${hotBins.length} bins for collection (${hotBins.map(b => b.deviceCode).join(", ")})`);
+
+    // Step 2: Create route
+    const subdivisionId = hotBins[0]!.subdivisionId;
+    const [route] = await db.insert(collectionRoutes).values({
+      subdivisionId: subdivisionId!,
+      status: "planned",
+      estimatedDistanceKm: +(hotBins.length * 1.2).toFixed(1),
+      estimatedDurationMinutes: +(hotBins.length * 8).toFixed(0),
+      assignedDriverId: user.id,
+      scheduledDate: new Date(),
+    }).returning();
+
+    log(2, "create_route", `Route ${route!.id.slice(0, 8)}... created with ${hotBins.length} stops`);
+
+    // Step 3: Create stops
+    const stopRecords = [];
+    for (let i = 0; i < hotBins.length; i++) {
+      const [stop] = await db.insert(routeStops).values({
+        routeId: route!.id,
+        deviceId: hotBins[i]!.id,
+        sequenceOrder: i + 1,
+        status: "pending",
+      }).returning();
+      stopRecords.push(stop!);
+    }
+    log(3, "create_stops", `${stopRecords.length} stops created in sequence`);
+
+    // Step 4: Start route
+    await db.update(collectionRoutes).set({ status: "in_progress", startedAt: new Date() }).where(eq(collectionRoutes.id, route!.id));
+    log(4, "start_route", "Route started — driver en route to first stop");
+
+    // Step 5-N: Execute each stop
+    for (let i = 0; i < stopRecords.length; i++) {
+      const stop = stopRecords[i]!;
+      const bin = hotBins[i]!;
+      const fill = telemetryMap[bin.id]?.fillLevelPercent ?? 0;
+      const stepBase = 5 + (i * 3);
+
+      // Arrive
+      await db.update(routeStops).set({ status: "arrived", arrivedAt: new Date() }).where(eq(routeStops.id, stop.id));
+      log(stepBase, "arrive", `Arrived at Stop #${i + 1} — ${bin.deviceCode} (fill: ${fill}%)`);
+
+      // Simulate different scenarios
+      if (i === hotBins.length - 2 && hotBins.length > 2) {
+        // Skip one stop (second to last) to make it realistic
+        await db.update(routeStops).set({ status: "skipped", notes: "Simulation: road blocked, cannot access bin" }).where(eq(routeStops.id, stop.id));
+        log(stepBase + 1, "skip", `Skipped Stop #${i + 1} — ${bin.deviceCode} (road blocked)`);
+      } else if (i === 1 && hotBins.length > 1) {
+        // Report issue on second stop
+        await db.insert(alerts).values({
+          subdivisionId: subdivisionId,
+          deviceId: bin.id,
+          alertType: "sensor_anomaly",
+          severity: "medium",
+          message: `Simulation: Bin ${bin.deviceCode} lid damaged, needs repair`,
+        });
+        log(stepBase + 1, "report_issue", `Issue reported at Stop #${i + 1} — ${bin.deviceCode}: lid damaged`);
+
+        // Still service it
+        await db.update(routeStops).set({
+          status: "serviced",
+          servicedAt: new Date(),
+          notes: "Simulation: Collected waste, reported lid damage for maintenance"
+        }).where(eq(routeStops.id, stop.id));
+        log(stepBase + 2, "service", `Serviced Stop #${i + 1} — ${bin.deviceCode} (with issue reported)`);
+      } else {
+        // Normal service
+        await db.update(routeStops).set({
+          status: "serviced",
+          servicedAt: new Date(),
+          notes: `Simulation: Normal collection, bin was at ${fill}%`
+        }).where(eq(routeStops.id, stop.id));
+        log(stepBase + 1, "service", `Serviced Stop #${i + 1} — ${bin.deviceCode} (${fill}% fill collected)`);
+      }
+    }
+
+    // Complete route
+    const completedAt = new Date();
+    await db.update(collectionRoutes).set({ status: "completed", completedAt }).where(eq(collectionRoutes.id, route!.id));
+
+    const finalStep = 5 + (stopRecords.length * 3);
+    const servicedCount = stopRecords.length - (hotBins.length > 2 ? 1 : 0);
+    const skippedCount = hotBins.length > 2 ? 1 : 0;
+    log(finalStep, "complete", `Route completed! ${servicedCount} serviced, ${skippedCount} skipped`);
+
+    return c.json({
+      success: true,
+      routeId: route!.id,
+      events,
+      summary: {
+        totalStops: stopRecords.length,
+        serviced: servicedCount,
+        skipped: skippedCount,
+        issues: hotBins.length > 1 ? 1 : 0,
+      }
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message, events }, 500);
+  }
 });
 
 export default app;

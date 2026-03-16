@@ -483,6 +483,10 @@ export function RoutesPage() {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [generateResult, setGenerateResult] = useState<CollectionRoute | null>(null);
   const [focusedStop, setFocusedStop] = useState<{ lat: number; lng: number } | null>(null);
+  const [showSimModal, setShowSimModal] = useState(false);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simEvents, setSimEvents] = useState<{step: number; action: string; detail: string; timestamp: string}[]>([]);
+  const [simResult, setSimResult] = useState<{routeId: string; summary: {totalStops: number; serviced: number; skipped: number; issues: number}} | null>(null);
   const [routeBounds, setRouteBounds] = useState<[number, number][] | null>(null);
   const geoJsonRef = useRef<L.GeoJSON | null>(null);
 
@@ -594,6 +598,28 @@ export function RoutesPage() {
     );
   }
 
+  async function runSimulation() {
+    setSimRunning(true);
+    setSimEvents([]);
+    setSimResult(null);
+    try {
+      const res = await api.post("/routes/simulate");
+      const data = res.data;
+      if (data.success) {
+        // Animate events appearing one by one
+        for (let i = 0; i < data.events.length; i++) {
+          await new Promise(r => setTimeout(r, 800));
+          setSimEvents(prev => [...prev, data.events[i]]);
+        }
+        setSimResult({ routeId: data.routeId, summary: data.summary });
+        queryClient.invalidateQueries({ queryKey: ["routes"] });
+      }
+    } catch (err) {
+      setSimEvents(prev => [...prev, { step: 0, action: "error", detail: "Simulation failed", timestamp: new Date().toISOString() }]);
+    }
+    setSimRunning(false);
+  }
+
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) ?? null;
   const activeStops = getActiveStops();
 
@@ -621,17 +647,27 @@ export function RoutesPage() {
             Manage collection routes and track driver dispatch status.
           </p>
         </div>
-        <Button
-          className="bg-[#1da253] text-white hover:bg-[#1da253]/90"
-          onClick={() => {
-            setShowGenerateModal(true);
-            setGenerateResult(null);
-            generateRouteMutation.reset();
-          }}
-        >
-          <Play className="h-4 w-4 mr-1.5" />
-          Generate Route
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowSimModal(true)}
+            className="border-[#1da253]/50 text-[#1da253] hover:bg-[#1da253]/10"
+          >
+            <Zap className="h-4 w-4 mr-1.5" />
+            Simulate Workflow
+          </Button>
+          <Button
+            className="bg-[#1da253] text-white hover:bg-[#1da253]/90"
+            onClick={() => {
+              setShowGenerateModal(true);
+              setGenerateResult(null);
+              generateRouteMutation.reset();
+            }}
+          >
+            <Play className="h-4 w-4 mr-1.5" />
+            Generate Route
+          </Button>
+        </div>
       </div>
 
       {/* Auto-generation banner */}
@@ -1002,6 +1038,103 @@ export function RoutesPage() {
           isError={generateRouteMutation.isError}
           result={generateResult}
         />
+      )}
+
+      {/* Simulation Modal */}
+      {showSimModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => { if (!simRunning) { setShowSimModal(false); setSimEvents([]); setSimResult(null); }}} />
+          <div className="relative z-10 w-full max-w-2xl mx-4 rounded-xl border border-border bg-card shadow-2xl max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-border">
+              <div>
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <Zap className="h-5 w-5 text-[#1da253]" />
+                  Workflow Simulation
+                </h2>
+                <p className="text-sm text-muted-foreground mt-0.5">End-to-end route execution simulation</p>
+              </div>
+              {!simRunning && (
+                <button onClick={() => { setShowSimModal(false); setSimEvents([]); setSimResult(null); }} className="p-1.5 rounded-md hover:bg-muted">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Event log */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-2 min-h-[300px] bg-[#0a0a0a] font-mono text-sm">
+              {simEvents.length === 0 && !simRunning && (
+                <p className="text-gray-500 text-center py-8">Click "Run Simulation" to start</p>
+              )}
+              {simEvents.map((evt, i) => {
+                const actionColors: Record<string, string> = {
+                  scan: "text-blue-400",
+                  create_route: "text-purple-400",
+                  create_stops: "text-purple-400",
+                  start_route: "text-yellow-400",
+                  arrive: "text-cyan-400",
+                  service: "text-green-400",
+                  skip: "text-orange-400",
+                  report_issue: "text-red-400",
+                  complete: "text-green-300",
+                  error: "text-red-500",
+                };
+                const color = actionColors[evt.action] || "text-gray-400";
+                return (
+                  <div key={i} className="flex gap-2 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                    <span className="text-gray-600 shrink-0">[{String(evt.step).padStart(2, "0")}]</span>
+                    <span className={cn("shrink-0 uppercase font-bold w-28", color)}>{evt.action}</span>
+                    <span className="text-gray-300">{evt.detail}</span>
+                  </div>
+                );
+              })}
+              {simRunning && (
+                <div className="flex items-center gap-2 text-gray-500">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Processing...</span>
+                </div>
+              )}
+            </div>
+
+            {/* Result summary */}
+            {simResult && (
+              <div className="border-t border-border p-4 bg-[#1da253]/5">
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-4 text-sm">
+                    <span className="font-medium">Stops: {simResult.summary.totalStops}</span>
+                    <span className="text-green-600">Serviced: {simResult.summary.serviced}</span>
+                    <span className="text-orange-600">Skipped: {simResult.summary.skipped}</span>
+                    <span className="text-red-600">Issues: {simResult.summary.issues}</span>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/routes/${simResult.routeId}/execute`)}>
+                    View Report <ChevronRight className="h-3 w-3 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="border-t border-border p-4 flex justify-end gap-2">
+              {!simRunning && simEvents.length === 0 && (
+                <Button onClick={runSimulation} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                  <Play className="h-4 w-4 mr-1.5" />
+                  Run Simulation
+                </Button>
+              )}
+              {!simRunning && simEvents.length > 0 && (
+                <>
+                  <Button variant="outline" onClick={() => { setSimEvents([]); setSimResult(null); }}>
+                    Reset
+                  </Button>
+                  <Button onClick={runSimulation} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                    <RefreshCw className="h-4 w-4 mr-1.5" />
+                    Run Again
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
