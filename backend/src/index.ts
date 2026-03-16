@@ -24,6 +24,7 @@ import deviceRoutes from "./routes/device";
 import aiRoutes from "./routes/ai";
 import auditLogRoutes from "./routes/audit-logs";
 import feedbackRoutes from "./routes/feedback";
+import scheduleRoutes from "./routes/schedules";
 
 // Services
 import * as mqttService from "./services/mqtt";
@@ -94,6 +95,7 @@ api.route("/system-config", systemConfigRoutes);
 api.route("/ai", aiRoutes);
 api.route("/audit-logs", auditLogRoutes);
 api.route("/feedback", feedbackRoutes);
+api.route("/schedules", scheduleRoutes);
 
 app.route("/api/v1", api);
 

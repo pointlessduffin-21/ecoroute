@@ -17,6 +17,7 @@ import { SubdivisionsPage } from "@/pages/subdivisions";
 import { ProfilePage } from "@/pages/profile";
 import { AuditLogsPage } from "@/pages/audit-logs";
 import { FeedbackPage } from "@/pages/feedback";
+import { SchedulesPage } from "@/pages/schedules";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -72,6 +73,7 @@ export function App() {
         <Route path="profile" element={<ProfilePage />} />
         <Route path="audit-logs" element={<AuditLogsPage />} />
         <Route path="feedback" element={<FeedbackPage />} />
+        <Route path="schedules" element={<SchedulesPage />} />
       </Route>
     </Routes>
   );

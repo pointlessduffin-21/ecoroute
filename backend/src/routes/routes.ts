@@ -921,6 +921,65 @@ app.get("/:id/report", async (c) => {
   return c.json({ data: report });
 });
 
+// ─── POST /override-generate — Dispatcher manually triggers route generation for a user/subdivision
+
+app.post("/override-generate", requireRole("admin", "dispatcher"), async (c) => {
+  const body = await c.req.json();
+  const { userId, subdivisionId } = body;
+
+  if (!subdivisionId) return c.json({ error: "subdivisionId is required" }, 400);
+
+  const db = getDb();
+
+  // Get bins above threshold in subdivision
+  const subBins = await db.select().from(smartBins)
+    .where(and(eq(smartBins.subdivisionId, subdivisionId), eq(smartBins.status, "active")));
+
+  if (subBins.length === 0) return c.json({ error: "No active bins in this subdivision" }, 400);
+
+  const binIds = subBins.map(b => b.id);
+  const allTelemetry = await db.select().from(binTelemetry)
+    .where(inArray(binTelemetry.deviceId, binIds))
+    .orderBy(desc(binTelemetry.recordedAt));
+
+  const telemetryMap: Record<string, number> = {};
+  for (const t of allTelemetry) {
+    if (!telemetryMap[t.deviceId]) telemetryMap[t.deviceId] = t.fillLevelPercent;
+  }
+
+  // Take ALL bins that need collection (above 50% for overrides)
+  const hotBins = subBins.filter(b => (telemetryMap[b.id] ?? 0) >= 50);
+  if (hotBins.length === 0) return c.json({ error: "No bins need collection at this time" }, 400);
+
+  hotBins.sort((a, b) => (telemetryMap[b.id] ?? 0) - (telemetryMap[a.id] ?? 0));
+
+  const assignTo = userId || c.get("user").id;
+
+  const [route] = await db.insert(collectionRoutes).values({
+    subdivisionId,
+    status: "planned",
+    estimatedDistanceKm: +(hotBins.length * 1.2).toFixed(1),
+    estimatedDurationMinutes: +(hotBins.length * 8).toFixed(0),
+    assignedDriverId: assignTo,
+    scheduledDate: new Date(),
+  }).returning();
+
+  for (let i = 0; i < hotBins.length; i++) {
+    await db.insert(routeStops).values({
+      routeId: route!.id,
+      deviceId: hotBins[i]!.id,
+      sequenceOrder: i + 1,
+      status: "pending",
+    });
+  }
+
+  return c.json({
+    data: route,
+    message: `Override route created with ${hotBins.length} stops`,
+    stopsCount: hotBins.length
+  });
+});
+
 // ─── POST /simulate — Run full end-to-end route execution simulation ────────
 
 app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
