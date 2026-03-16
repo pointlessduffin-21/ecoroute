@@ -448,6 +448,28 @@ export const faqs = pgTable(
   ]
 );
 
+// ─── 16. Shift Schedules ─────────────────────────────────────────────────────
+
+export const shiftSchedules = pgTable(
+  "shift_schedule",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => users.id).notNull(),
+    subdivisionId: uuid("subdivision_id").references(() => subdivisions.id).notNull(),
+    dayOfWeek: integer("day_of_week").notNull(), // 0=Sunday, 1=Monday, ..., 6=Saturday
+    startTime: varchar("start_time", { length: 5 }).notNull(), // "07:00" format
+    endTime: varchar("end_time", { length: 5 }).notNull(), // "15:00" format
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_shift_user").on(table.userId),
+    index("idx_shift_day").on(table.dayOfWeek),
+    index("idx_shift_subdivision").on(table.subdivisionId),
+  ]
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 
 export const subdivisionsRelations = relations(subdivisions, ({ many }) => ({
@@ -574,4 +596,9 @@ export const systemConfigRelations = relations(systemConfig, ({ one }) => ({
     fields: [systemConfig.subdivisionId],
     references: [subdivisions.id],
   }),
+}));
+
+export const shiftSchedulesRelations = relations(shiftSchedules, ({ one }) => ({
+  user: one(users, { fields: [shiftSchedules.userId], references: [users.id] }),
+  subdivision: one(subdivisions, { fields: [shiftSchedules.subdivisionId], references: [subdivisions.id] }),
 }));

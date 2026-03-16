@@ -484,6 +484,7 @@ export function RoutesPage() {
   const [generateResult, setGenerateResult] = useState<CollectionRoute | null>(null);
   const [focusedStop, setFocusedStop] = useState<{ lat: number; lng: number } | null>(null);
   const [showSimModal, setShowSimModal] = useState(false);
+  const [simSubdivisionId, setSimSubdivisionId] = useState("");
   const [simRunning, setSimRunning] = useState(false);
   const [simEvents, setSimEvents] = useState<{step: number; action: string; detail: string; timestamp: string}[]>([]);
   const [simResult, setSimResult] = useState<{routeId: string; summary: {totalStops: number; serviced: number; skipped: number; issues: number}} | null>(null);
@@ -598,6 +599,23 @@ export function RoutesPage() {
     return driverMap.get(driverId) ?? driverId.slice(0, 10);
   }
 
+  const subdivisionMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of subdivisions) map.set(s.id, s.name);
+    return map;
+  }, [subdivisions]);
+
+  function subdivisionName(id: string | null): string {
+    if (!id) return "Unknown";
+    return subdivisionMap.get(id) ?? "Unknown";
+  }
+
+  function routeLabel(route: CollectionRoute, idx: number): string {
+    const sub = subdivisionName(route.subdivisionId);
+    const date = route.scheduledDate ? new Date(route.scheduledDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+    return `${sub} — ${date}`;
+  }
+
   function getActiveStops(): RouteStop[] {
     if (!selectedRouteId || !stopsResponse?.data) return [];
     return [...stopsResponse.data].sort(
@@ -606,11 +624,12 @@ export function RoutesPage() {
   }
 
   async function runSimulation() {
+    if (!simSubdivisionId) return;
     setSimRunning(true);
     setSimEvents([]);
     setSimResult(null);
     try {
-      const res = await api.post("/routes/simulate");
+      const res = await api.post("/routes/simulate", { subdivisionId: simSubdivisionId });
       const data = res.data;
       if (data.success) {
         // Animate events appearing one by one
@@ -869,8 +888,8 @@ export function RoutesPage() {
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {truncateId(route.id)}
+                        <span className="text-xs font-semibold text-foreground">
+                          {subdivisionName(route.subdivisionId)}
                         </span>
                         <Badge
                           className={cn("text-[10px]", badgeClasses[route.status])}
@@ -879,23 +898,18 @@ export function RoutesPage() {
                           {statusLabel[route.status]}
                         </Badge>
                       </div>
-                      <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                         <span>{driverName(route.assignedDriverId)}</span>
-                        {route.optimizationScore != null && (
+                        {route.estimatedDistanceKm != null && (
                           <>
                             <span>·</span>
-                            <span
-                              className={cn(
-                                "font-semibold",
-                                route.optimizationScore >= 85
-                                  ? "text-green-600"
-                                  : route.optimizationScore >= 70
-                                  ? "text-yellow-600"
-                                  : "text-red-600"
-                              )}
-                            >
-                              {route.optimizationScore}%
-                            </span>
+                            <span>{route.estimatedDistanceKm.toFixed(1)} km</span>
+                          </>
+                        )}
+                        {route.estimatedDurationMinutes != null && (
+                          <>
+                            <span>·</span>
+                            <span>{route.estimatedDurationMinutes} min</span>
                           </>
                         )}
                       </div>
@@ -1117,9 +1131,26 @@ export function RoutesPage() {
             )}
 
             {/* Footer */}
-            <div className="border-t border-border p-4 flex justify-end gap-2">
+            <div className="border-t border-border p-4 space-y-3">
+              {/* Subdivision picker - always visible before running */}
               {!simRunning && simEvents.length === 0 && (
-                <Button onClick={runSimulation} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Subdivision</label>
+                  <select
+                    value={simSubdivisionId}
+                    onChange={(e) => setSimSubdivisionId(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="">Select a subdivision...</option>
+                    {subdivisions.map((sub) => (
+                      <option key={sub.id} value={sub.id}>{sub.name} ({sub.code})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+              {!simRunning && simEvents.length === 0 && (
+                <Button onClick={runSimulation} disabled={!simSubdivisionId} className="bg-[#1da253] hover:bg-[#1da253]/90">
                   <Play className="h-4 w-4 mr-1.5" />
                   Run Simulation
                 </Button>
@@ -1129,12 +1160,13 @@ export function RoutesPage() {
                   <Button variant="outline" onClick={() => { setSimEvents([]); setSimResult(null); }}>
                     Reset
                   </Button>
-                  <Button onClick={runSimulation} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                  <Button onClick={runSimulation} disabled={!simSubdivisionId} className="bg-[#1da253] hover:bg-[#1da253]/90">
                     <RefreshCw className="h-4 w-4 mr-1.5" />
                     Run Again
                   </Button>
                 </>
               )}
+              </div>
             </div>
           </div>
         </div>

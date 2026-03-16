@@ -10,6 +10,8 @@ import {
   serviceEvents,
   alerts,
   binTelemetry,
+  shiftSchedules,
+  subdivisions,
 } from "../db/schema";
 import { optimizeRoute } from "../services/route-optimizer";
 import { requireRole } from "../middleware/rbac";
@@ -847,20 +849,92 @@ app.get("/:id/report", async (c) => {
   return c.json({ data: report });
 });
 
+// ─── POST /override-generate — Dispatcher manually triggers route generation for a user/subdivision
+
+app.post("/override-generate", requireRole("admin", "dispatcher"), async (c) => {
+  const body = await c.req.json();
+  const { userId, subdivisionId } = body;
+
+  if (!subdivisionId) return c.json({ error: "subdivisionId is required" }, 400);
+
+  const db = getDb();
+
+  // Get bins above threshold in subdivision
+  const subBins = await db.select().from(smartBins)
+    .where(and(eq(smartBins.subdivisionId, subdivisionId), eq(smartBins.status, "active")));
+
+  if (subBins.length === 0) return c.json({ error: "No active bins in this subdivision" }, 400);
+
+  const binIds = subBins.map(b => b.id);
+  const allTelemetry = await db.select().from(binTelemetry)
+    .where(inArray(binTelemetry.deviceId, binIds))
+    .orderBy(desc(binTelemetry.recordedAt));
+
+  const telemetryMap: Record<string, number> = {};
+  for (const t of allTelemetry) {
+    if (!telemetryMap[t.deviceId]) telemetryMap[t.deviceId] = t.fillLevelPercent;
+  }
+
+  // Take ALL bins that need collection (above 50% for overrides)
+  const hotBins = subBins.filter(b => (telemetryMap[b.id] ?? 0) >= 50);
+  if (hotBins.length === 0) return c.json({ error: "No bins need collection at this time" }, 400);
+
+  hotBins.sort((a, b) => (telemetryMap[b.id] ?? 0) - (telemetryMap[a.id] ?? 0));
+
+  const assignTo = userId || c.get("user").id;
+
+  const [route] = await db.insert(collectionRoutes).values({
+    subdivisionId,
+    status: "planned",
+    estimatedDistanceKm: +(hotBins.length * 1.2).toFixed(1),
+    estimatedDurationMinutes: +(hotBins.length * 8).toFixed(0),
+    assignedDriverId: assignTo,
+    scheduledDate: new Date(),
+  }).returning();
+
+  for (let i = 0; i < hotBins.length; i++) {
+    await db.insert(routeStops).values({
+      routeId: route!.id,
+      deviceId: hotBins[i]!.id,
+      sequenceOrder: i + 1,
+      status: "pending",
+    });
+  }
+
+  return c.json({
+    data: route,
+    message: `Override route created with ${hotBins.length} stops`,
+    stopsCount: hotBins.length
+  });
+});
+
 // ─── POST /simulate — Run full end-to-end route execution simulation ────────
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
   const db = getDb();
   const user = c.get("user");
+  const body = await c.req.json().catch(() => ({}));
+  const subdivisionId = (body as Record<string, unknown>).subdivisionId as string | undefined;
   const events: { step: number; action: string; detail: string; timestamp: string }[] = [];
+  let simShift: typeof shiftSchedules.$inferSelect | undefined;
 
   function log(step: number, action: string, detail: string) {
     events.push({ step, action, detail, timestamp: new Date().toISOString() });
   }
 
+  if (!subdivisionId) {
+    return c.json({ success: false, error: "subdivisionId is required — select a subdivision to simulate" }, 400);
+  }
+
+  // Get subdivision name for logs
+  const [subRecord] = await db.select({ name: subdivisions.name }).from(subdivisions).where(eq(subdivisions.id, subdivisionId)).limit(1);
+  const subName = subRecord?.name ?? subdivisionId.slice(0, 8);
+
   try {
-    // Step 1: Find bins above threshold
-    const allBins = await db.select().from(smartBins).where(eq(smartBins.status, "active"));
+    // Step 1: Find bins above threshold in the selected subdivision
+    const allBins = await db.select().from(smartBins).where(and(eq(smartBins.status, "active"), eq(smartBins.subdivisionId, subdivisionId)));
     const binIds = allBins.map(b => b.id);
 
     if (binIds.length === 0) {
@@ -888,12 +962,31 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
       hotBins.push(...allBins.slice(0, 3));
     }
 
-    log(1, "scan", `Found ${hotBins.length} bins for collection (${hotBins.map(b => b.deviceCode).join(", ")})`);
+    log(1, "scan", `[${subName}] Found ${hotBins.length} bins for collection (${hotBins.map(b => b.deviceCode).join(", ")})`);
 
-    // Step 2: Create route
-    const subdivisionId = hotBins[0]!.subdivisionId;
+    // Step 2: Create shift schedule (simulated)
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const startTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const endHour = Math.min(now.getHours() + 8, 23);
+    const endTime = `${String(endHour).padStart(2, "0")}:00`;
+
+    const [createdShift] = await db.insert(shiftSchedules).values({
+      userId: user.id,
+      subdivisionId: hotBins[0]!.subdivisionId!,
+      dayOfWeek,
+      startTime,
+      endTime,
+      isActive: true,
+    }).returning();
+    simShift = createdShift;
+
+    log(2, "create_schedule", `[${subName}] Shift created: ${DAY_NAMES[dayOfWeek]} ${startTime}-${endTime} for ${user.fullName || user.email}`);
+
+    // Step 3: Create route
+    const routeSubId = hotBins[0]!.subdivisionId;
     const [route] = await db.insert(collectionRoutes).values({
-      subdivisionId: subdivisionId!,
+      subdivisionId: routeSubId!,
       status: "planned",
       estimatedDistanceKm: +(hotBins.length * 1.2).toFixed(1),
       estimatedDurationMinutes: +(hotBins.length * 8).toFixed(0),
@@ -901,9 +994,9 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
       scheduledDate: new Date(),
     }).returning();
 
-    log(2, "create_route", `Route ${route!.id.slice(0, 8)}... created with ${hotBins.length} stops`);
+    log(3, "create_route", `Route ${route!.id.slice(0, 8)}... created with ${hotBins.length} stops`);
 
-    // Step 3: Create stops
+    // Step 4: Create stops
     const stopRecords = [];
     for (let i = 0; i < hotBins.length; i++) {
       const [stop] = await db.insert(routeStops).values({
@@ -914,18 +1007,18 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
       }).returning();
       stopRecords.push(stop!);
     }
-    log(3, "create_stops", `${stopRecords.length} stops created in sequence`);
+    log(4, "create_stops", `${stopRecords.length} stops created in sequence`);
 
-    // Step 4: Start route
+    // Step 5: Start route
     await db.update(collectionRoutes).set({ status: "in_progress", startedAt: new Date() }).where(eq(collectionRoutes.id, route!.id));
-    log(4, "start_route", "Route started — driver en route to first stop");
+    log(5, "start_route", "Route started — driver en route to first stop");
 
-    // Step 5-N: Execute each stop
+    // Step 6-N: Execute each stop
     for (let i = 0; i < stopRecords.length; i++) {
       const stop = stopRecords[i]!;
       const bin = hotBins[i]!;
       const fill = telemetryMap[bin.id]?.fillLevelPercent ?? 0;
-      const stepBase = 5 + (i * 3);
+      const stepBase = 6 + (i * 3);
 
       // Arrive
       await db.update(routeStops).set({ status: "arrived", arrivedAt: new Date() }).where(eq(routeStops.id, stop.id));
@@ -969,10 +1062,16 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
     const completedAt = new Date();
     await db.update(collectionRoutes).set({ status: "completed", completedAt }).where(eq(collectionRoutes.id, route!.id));
 
-    const finalStep = 5 + (stopRecords.length * 3);
+    const finalStep = 6 + (stopRecords.length * 3);
     const servicedCount = stopRecords.length - (hotBins.length > 2 ? 1 : 0);
     const skippedCount = hotBins.length > 2 ? 1 : 0;
     log(finalStep, "complete", `Route completed! ${servicedCount} serviced, ${skippedCount} skipped`);
+
+    // Cleanup: remove temp shift schedule
+    if (simShift) {
+      await db.delete(shiftSchedules).where(eq(shiftSchedules.id, simShift.id));
+      log(finalStep + 1, "cleanup", "Temporary shift schedule removed");
+    }
 
     return c.json({
       success: true,
@@ -986,6 +1085,12 @@ app.post("/simulate", requireRole("admin", "dispatcher"), async (c) => {
       }
     });
   } catch (err: any) {
+    // Cleanup: remove temp shift schedule even on error
+    if (simShift) {
+      try {
+        await db.delete(shiftSchedules).where(eq(shiftSchedules.id, simShift.id));
+      } catch { /* ignore cleanup errors */ }
+    }
     return c.json({ success: false, error: err.message, events }, 500);
   }
 });

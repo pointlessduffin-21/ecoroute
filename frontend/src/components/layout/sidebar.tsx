@@ -12,6 +12,7 @@ import {
   Truck,
   ClipboardList,
   MessageSquare,
+  Calendar,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ const navItems: NavItem[] = [
   { to: "/my-routes", icon: Truck, label: "My Routes", maintenanceOnly: true },
   { to: "/alerts", icon: Bell, label: "Alerts" },
   { to: "/users", icon: Users, label: "Users", adminOnly: true },
+  { to: "/schedules", icon: Calendar, label: "Schedules", adminOnly: true },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
   { to: "/subdivisions", icon: MapPin, label: "Subdivisions", adminOnly: true },
   { to: "/audit-logs", icon: ClipboardList, label: "Audit Logs", adminOnly: true },
