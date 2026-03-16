@@ -599,6 +599,23 @@ export function RoutesPage() {
     return driverMap.get(driverId) ?? driverId.slice(0, 10);
   }
 
+  const subdivisionMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of subdivisions) map.set(s.id, s.name);
+    return map;
+  }, [subdivisions]);
+
+  function subdivisionName(id: string | null): string {
+    if (!id) return "Unknown";
+    return subdivisionMap.get(id) ?? "Unknown";
+  }
+
+  function routeLabel(route: CollectionRoute, idx: number): string {
+    const sub = subdivisionName(route.subdivisionId);
+    const date = route.scheduledDate ? new Date(route.scheduledDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+    return `${sub} — ${date}`;
+  }
+
   function getActiveStops(): RouteStop[] {
     if (!selectedRouteId || !stopsResponse?.data) return [];
     return [...stopsResponse.data].sort(
@@ -871,8 +888,8 @@ export function RoutesPage() {
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {truncateId(route.id)}
+                        <span className="text-xs font-semibold text-foreground">
+                          {subdivisionName(route.subdivisionId)}
                         </span>
                         <Badge
                           className={cn("text-[10px]", badgeClasses[route.status])}
@@ -881,23 +898,18 @@ export function RoutesPage() {
                           {statusLabel[route.status]}
                         </Badge>
                       </div>
-                      <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                         <span>{driverName(route.assignedDriverId)}</span>
-                        {route.optimizationScore != null && (
+                        {route.estimatedDistanceKm != null && (
                           <>
                             <span>·</span>
-                            <span
-                              className={cn(
-                                "font-semibold",
-                                route.optimizationScore >= 85
-                                  ? "text-green-600"
-                                  : route.optimizationScore >= 70
-                                  ? "text-yellow-600"
-                                  : "text-red-600"
-                              )}
-                            >
-                              {route.optimizationScore}%
-                            </span>
+                            <span>{route.estimatedDistanceKm.toFixed(1)} km</span>
+                          </>
+                        )}
+                        {route.estimatedDurationMinutes != null && (
+                          <>
+                            <span>·</span>
+                            <span>{route.estimatedDurationMinutes} min</span>
                           </>
                         )}
                       </div>
