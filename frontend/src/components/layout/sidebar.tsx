@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Trash2,
@@ -10,6 +10,8 @@ import {
   MapPin,
   BarChart3,
   Truck,
+  ClipboardList,
+  MessageSquare,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -31,11 +33,14 @@ const navItems: NavItem[] = [
   { to: "/users", icon: Users, label: "Users", adminOnly: true },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
   { to: "/subdivisions", icon: MapPin, label: "Subdivisions", adminOnly: true },
+  { to: "/audit-logs", icon: ClipboardList, label: "Audit Logs", adminOnly: true },
+  { to: "/feedback", icon: MessageSquare, label: "Feedback & FAQs" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export function Sidebar() {
   const { user, logout, isAdmin, isMaintenance } = useAuth();
+  const navigate = useNavigate();
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-border bg-sidebar">
@@ -75,10 +80,14 @@ export function Sidebar() {
 
       <div className="border-t border-border p-3">
         <div className="flex items-center gap-3 rounded-md px-3 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">
+          <button
+            onClick={() => navigate("/profile")}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold hover:ring-2 hover:ring-primary/30 transition-all"
+            title="View profile"
+          >
             {user?.fullName?.charAt(0) ?? "?"}
-          </div>
-          <div className="flex-1 min-w-0">
+          </button>
+          <div className="flex-1 min-w-0 cursor-pointer" onClick={() => navigate("/profile")}>
             <p className="text-sm font-medium truncate">{user?.fullName}</p>
             <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
           </div>

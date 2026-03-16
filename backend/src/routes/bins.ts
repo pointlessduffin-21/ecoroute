@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, inArray } from "drizzle-orm";
 import { getDb } from "../config/database";
 import { smartBins, binTelemetry, fillPredictions } from "../db/schema";
 import { requireRole } from "../middleware/rbac";
@@ -75,8 +75,32 @@ app.get("/", async (c) => {
       .where(whereClause),
   ]);
 
+  // Fetch latest telemetry for each bin
+  const binIds = items.map((b) => b.id);
+  let telemetryMap: Record<string, typeof binTelemetry.$inferSelect> = {};
+
+  if (binIds.length > 0) {
+    // For each bin, get its latest telemetry row
+    const allTelemetry = await db
+      .select()
+      .from(binTelemetry)
+      .where(inArray(binTelemetry.deviceId, binIds))
+      .orderBy(desc(binTelemetry.recordedAt));
+
+    for (const row of allTelemetry) {
+      if (!telemetryMap[row.deviceId]) {
+        telemetryMap[row.deviceId] = row;
+      }
+    }
+  }
+
+  const binsWithTelemetry = items.map((bin) => ({
+    ...bin,
+    latestTelemetry: telemetryMap[bin.id] || null,
+  }));
+
   return c.json({
-    data: items,
+    data: binsWithTelemetry,
     pagination: {
       total: countResult[0]!.count,
       limit,

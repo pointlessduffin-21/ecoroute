@@ -124,22 +124,6 @@ export function BinsPage() {
 
   const bins: SmartBin[] = binsResponse?.data ?? [];
 
-  const { data: telemetryMap } = useQuery({
-    queryKey: ["bins-telemetry"],
-    queryFn: async () => {
-      const res = await api.get<PaginatedResponse<BinTelemetry>>(
-        "/telemetry?limit=200&sort=-recordedAt"
-      );
-      const map: Record<string, BinTelemetry> = {};
-      for (const t of res.data.data) {
-        if (!map[t.deviceId]) map[t.deviceId] = t;
-      }
-      return map;
-    },
-  });
-
-  const telemetry: Record<string, BinTelemetry> = telemetryMap ?? {};
-
   // ---- Mutations ----
 
   const addBinMutation = useMutation({
@@ -311,7 +295,7 @@ export function BinsPage() {
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {filtered.map((bin) => {
-                const t = telemetry[bin.id];
+                const t = (bin as any).latestTelemetry as BinTelemetry | null;
                 const fill = t?.fillLevelPercent ?? 0;
                 const signal = signalLabel(t?.signalStrength ?? null);
 

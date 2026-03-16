@@ -406,6 +406,48 @@ export const systemConfig = pgTable(
   ]
 );
 
+// ─── 14. Feedback ────────────────────────────────────────────────────────────
+
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => users.id).notNull(),
+    subdivisionId: uuid("subdivision_id").references(() => subdivisions.id),
+    category: varchar("category", { length: 50 }).notNull(),
+    message: text("message").notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("open"),
+    adminReply: text("admin_reply"),
+    repliedAt: timestamp("replied_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_feedback_user").on(table.userId),
+    index("idx_feedback_status").on(table.status),
+  ]
+);
+
+// ─── 15. FAQs ────────────────────────────────────────────────────────────────
+
+export const faqs = pgTable(
+  "faq",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    subdivisionId: uuid("subdivision_id").references(() => subdivisions.id),
+    question: text("question").notNull(),
+    answer: text("answer").notNull(),
+    category: varchar("category", { length: 50 }).default("general"),
+    sortOrder: integer("sort_order").default(0),
+    isPublished: boolean("is_published").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_faq_category").on(table.category),
+    index("idx_faq_published").on(table.isPublished),
+  ]
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 
 export const subdivisionsRelations = relations(subdivisions, ({ many }) => ({

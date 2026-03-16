@@ -446,14 +446,35 @@ export function BinDetailsPage() {
                   />
                 </div>
 
-                {/* MQTT Topic (read-only, derived from device code) */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">MQTT Topic</label>
-                  <Input
-                    value={`ecoroute/trash_can/${editForm.deviceCode}`}
-                    disabled
-                    className="opacity-60 font-mono text-xs"
-                  />
+                {/* MQTT Configuration (display-only) */}
+                <div className="rounded-md border border-border p-4 space-y-3">
+                  <p className="text-sm font-medium text-muted-foreground">MQTT Configuration</p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="mb-1 block text-xs text-muted-foreground">Broker Address</label>
+                      <Input
+                        value="109.123.238.215"
+                        disabled
+                        className="opacity-60 font-mono text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Port</label>
+                      <Input
+                        value="1883"
+                        disabled
+                        className="opacity-60 font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Topic</label>
+                    <Input
+                      value={`ecoroute/trash_can/${editForm.deviceCode}`}
+                      disabled
+                      className="opacity-60 font-mono text-xs"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
