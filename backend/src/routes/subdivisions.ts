@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, sql, desc } from "drizzle-orm";
 import { getDb } from "../config/database";
-import { subdivisions } from "../db/schema";
+import { subdivisions, users, smartBins } from "../db/schema";
 import type { AppVariables } from "../types/context";
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -72,7 +72,32 @@ app.get("/:id", async (c) => {
     return c.json({ error: "Subdivision not found" }, 404);
   }
 
-  return c.json({ data: subdivision[0] });
+  // Get users in this subdivision
+  const subUsers = await db.select({
+    id: users.id,
+    fullName: users.fullName,
+    email: users.email,
+    role: users.role,
+    isActive: users.isActive,
+  }).from(users).where(eq(users.subdivisionId, id));
+
+  // Get bins in this subdivision
+  const subBins = await db.select({
+    id: smartBins.id,
+    deviceCode: smartBins.deviceCode,
+    status: smartBins.status,
+    capacityLiters: smartBins.capacityLiters,
+  }).from(smartBins).where(eq(smartBins.subdivisionId, id));
+
+  return c.json({
+    data: {
+      ...subdivision[0],
+      users: subUsers,
+      bins: subBins,
+      userCount: subUsers.length,
+      binCount: subBins.length,
+    }
+  });
 });
 
 // ─── POST / — Create subdivision ────────────────────────────────────────────
@@ -148,6 +173,50 @@ app.delete("/:id", async (c) => {
   }
 
   return c.json({ data: updated, message: "Subdivision deactivated" });
+});
+
+// ─── POST /:id/assign-user — Assign user to subdivision ─────────────────────
+
+app.post("/:id/assign-user", async (c) => {
+  const { id } = c.req.param();
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ error: "Admin only" }, 403);
+
+  const body = await c.req.json();
+  const { userId } = body;
+  if (!userId) return c.json({ error: "userId is required" }, 400);
+
+  const db = getDb();
+
+  const [updated] = await db.update(users)
+    .set({ subdivisionId: id, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning();
+
+  if (!updated) return c.json({ error: "User not found" }, 404);
+  return c.json({ data: updated });
+});
+
+// ─── POST /:id/assign-bin — Assign bin to subdivision ───────────────────────
+
+app.post("/:id/assign-bin", async (c) => {
+  const { id } = c.req.param();
+  const user = c.get("user");
+  if (user.role !== "admin") return c.json({ error: "Admin only" }, 403);
+
+  const body = await c.req.json();
+  const { binId } = body;
+  if (!binId) return c.json({ error: "binId is required" }, 400);
+
+  const db = getDb();
+
+  const [updated] = await db.update(smartBins)
+    .set({ subdivisionId: id, updatedAt: new Date() })
+    .where(eq(smartBins.id, binId))
+    .returning();
+
+  if (!updated) return c.json({ error: "Bin not found" }, 404);
+  return c.json({ data: updated });
 });
 
 export default app;

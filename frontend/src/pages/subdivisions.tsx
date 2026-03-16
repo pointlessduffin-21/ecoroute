@@ -10,8 +10,11 @@ import {
   MapContainer,
   TileLayer,
   Polygon,
+  Polyline,
   Popup,
+  Marker,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -26,6 +29,15 @@ function MapController({ bounds }: { bounds: [number, number][] | null }) {
   return null;
 }
 
+function GeofenceDrawer({ points, onAddPoint, enabled }: { points: [number, number][]; onAddPoint: (lat: number, lng: number) => void; enabled: boolean }) {
+  useMapEvents({
+    click(e) {
+      if (enabled) onAddPoint(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
 export function SubdivisionsPage() {
   const [subdivisions, setSubdivisions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,6 +45,26 @@ export function SubdivisionsPage() {
   const [mapBounds, setMapBounds] = useState<[number, number][] | null>(null);
   const [hoveredSubId, setHoveredSubId] = useState<string | null>(null);
   const [selectedSubId, setSelectedSubId] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editingSub, setEditingSub] = useState<any | null>(null);
+  const [formName, setFormName] = useState("");
+  const [formCode, setFormCode] = useState("");
+  const [formAddress, setFormAddress] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [formPhone, setFormPhone] = useState("");
+  const [geofencePoints, setGeofencePoints] = useState<[number, number][]>([]);
+  const [drawingGeofence, setDrawingGeofence] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [bins, setBins] = useState<any[]>([]);
+  const [subDetail, setSubDetail] = useState<any | null>(null);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignType, setAssignType] = useState<"user" | "bin">("user");
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [allBinsForAssign, setAllBinsForAssign] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.get("/bins?limit=100").then(res => setBins(res.data.data)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchSubdivisions();
@@ -49,6 +81,15 @@ export function SubdivisionsPage() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (showAssignModal && assignType === "user") {
+      api.get("/users").then(res => setAllUsers(res.data.data)).catch(() => {});
+    }
+    if (showAssignModal && assignType === "bin") {
+      api.get("/bins?limit=100").then(res => setAllBinsForAssign(res.data.data)).catch(() => {});
+    }
+  }, [showAssignModal, assignType]);
 
   const filteredSubdivisions = useMemo(
     () =>
@@ -72,13 +113,20 @@ export function SubdivisionsPage() {
   }, [filteredSubdivisions]);
 
   const handleSubFocus = (sub: any) => {
-    setSelectedSubId(selectedSubId === sub.id ? null : sub.id);
+    const newId = selectedSubId === sub.id ? null : sub.id;
+    setSelectedSubId(newId);
+    if (newId) {
+      api.get(`/subdivisions/${sub.id}`).then(res => setSubDetail(res.data.data)).catch(() => {});
+    } else {
+      setSubDetail(null);
+    }
     const coords = getPolygonPositions(sub.geofence);
     if (coords.length > 0) setMapBounds(coords);
   };
 
   const resetView = () => {
     setSelectedSubId(null);
+    setSubDetail(null);
     const allCoords: [number, number][] = [];
     filteredSubdivisions.forEach((sub) => {
       const poly = getPolygonPositions(sub.geofence);
@@ -102,6 +150,85 @@ export function SubdivisionsPage() {
     }
   };
 
+  function openModal(sub: any | null) {
+    setEditingSub(sub);
+    setFormName(sub?.name ?? "");
+    setFormCode(sub?.code ?? "");
+    setFormAddress(sub?.address ?? "");
+    setFormEmail(sub?.contactEmail ?? "");
+    setFormPhone(sub?.contactPhone ?? "");
+    setGeofencePoints(sub ? getPolygonPositions(sub.geofence) : []);
+    setDrawingGeofence(false);
+    setShowModal(true);
+  }
+
+  function closeModal() {
+    setShowModal(false);
+    setEditingSub(null);
+    setGeofencePoints([]);
+    setDrawingGeofence(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    const geojson = geofencePoints.length >= 3 ? JSON.stringify({
+      type: "Polygon",
+      coordinates: [[...geofencePoints.map(([lat, lng]) => [lng, lat]), [geofencePoints[0]![1], geofencePoints[0]![0]]]],
+    }) : undefined;
+
+    const payload = {
+      name: formName,
+      code: formCode,
+      address: formAddress || undefined,
+      contactEmail: formEmail || undefined,
+      contactPhone: formPhone || undefined,
+      geofence: geojson,
+    };
+
+    try {
+      if (editingSub) {
+        await api.put(`/subdivisions/${editingSub.id}`, payload);
+      } else {
+        await api.post("/subdivisions", payload);
+      }
+      fetchSubdivisions();
+      closeModal();
+    } catch (err) {
+      console.error("Save failed:", err);
+    }
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Deactivate this subdivision?")) return;
+    try {
+      await api.delete(`/subdivisions/${id}`);
+      fetchSubdivisions();
+      setSelectedSubId(null);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+  }
+
+  async function handleAssign(itemId: string) {
+    if (!selectedSubId) return;
+    try {
+      if (assignType === "user") {
+        await api.post(`/subdivisions/${selectedSubId}/assign-user`, { userId: itemId });
+      } else {
+        await api.post(`/subdivisions/${selectedSubId}/assign-bin`, { binId: itemId });
+      }
+      // Refresh detail
+      const res = await api.get(`/subdivisions/${selectedSubId}`);
+      setSubDetail(res.data.data);
+      setShowAssignModal(false);
+      // Also refresh bins on map
+      api.get("/bins?limit=100").then(res => setBins(res.data.data)).catch(() => {});
+    } catch (err) {
+      console.error("Assign failed:", err);
+    }
+  }
+
   const selectedSub = subdivisions.find((s) => s.id === selectedSubId) ?? null;
   const defaultCenter: [number, number] = [14.5995, 120.9842];
 
@@ -115,7 +242,7 @@ export function SubdivisionsPage() {
             Manage your operational zones and geofences.
           </p>
         </div>
-        <Button className="bg-[#1da253] text-white hover:bg-[#1da253]/90">
+        <Button className="bg-[#1da253] text-white hover:bg-[#1da253]/90" onClick={() => openModal(null)}>
           <Plus className="mr-2 h-4 w-4" />
           Add Subdivision
         </Button>
@@ -170,6 +297,17 @@ export function SubdivisionsPage() {
               </Polygon>
             );
           })}
+
+          {bins.map((bin: any) => (
+            <Marker key={bin.id} position={[bin.latitude, bin.longitude]}>
+              <Popup>
+                <div className="text-xs">
+                  <p className="font-semibold">{bin.deviceCode}</p>
+                  <p className="text-gray-500">{bin.capacityLiters}L — {bin.status}</p>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
         </MapContainer>
 
         {/* Floating subdivision list panel — left on desktop, bottom sheet on mobile */}
@@ -328,6 +466,70 @@ export function SubdivisionsPage() {
                   {selectedSub.isActive ? "Active" : "Inactive"}
                 </span>
               </div>
+              <div className="flex gap-2 pt-2">
+                <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openModal(selectedSub)}>
+                  Edit
+                </Button>
+                <Button size="sm" variant="outline" className="text-xs h-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(selectedSub.id)}>
+                  Deactivate
+                </Button>
+              </div>
+
+              {/* Users assigned */}
+              {subDetail?.users && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-xs font-semibold text-muted-foreground mb-1.5">Users ({subDetail.users.length})</p>
+                  {subDetail.users.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No users assigned</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {subDetail.users.map((u: any) => (
+                        <div key={u.id} className="flex items-center justify-between text-xs">
+                          <span className="truncate">{u.fullName}</span>
+                          <span className={cn("rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
+                            u.role === "admin" ? "bg-purple-100 text-purple-700" :
+                            u.role === "dispatcher" ? "bg-blue-100 text-blue-700" :
+                            "bg-green-100 text-green-700"
+                          )}>{u.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Bins assigned */}
+              {subDetail?.bins && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-xs font-semibold text-muted-foreground mb-1.5">Bins ({subDetail.bins.length})</p>
+                  {subDetail.bins.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No bins assigned</p>
+                  ) : (
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {subDetail.bins.map((b: any) => (
+                        <div key={b.id} className="flex items-center justify-between text-xs">
+                          <span className="truncate">{b.deviceCode}</span>
+                          <span className={cn("rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
+                            b.status === "active" ? "bg-green-100 text-green-700" :
+                            b.status === "maintenance" ? "bg-yellow-100 text-yellow-700" :
+                            "bg-gray-100 text-gray-700"
+                          )}>{b.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Assign buttons */}
+              <div className="pt-2 border-t border-border space-y-1.5">
+                <Button size="sm" variant="outline" className="w-full text-xs h-7" onClick={() => { setAssignType("user"); setShowAssignModal(true); }}>
+                  + Assign User
+                </Button>
+                <Button size="sm" variant="outline" className="w-full text-xs h-7" onClick={() => { setAssignType("bin"); setShowAssignModal(true); }}>
+                  + Assign Bin
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -341,6 +543,155 @@ export function SubdivisionsPage() {
           </div>
         )}
       </div>
+
+      {/* Create/Edit Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-500 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => { if (!saving) closeModal(); }} />
+          <div className="relative z-10 w-full max-w-3xl mx-4 rounded-xl border border-border bg-card shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-border">
+              <h2 className="text-lg font-semibold">{editingSub ? "Edit Subdivision" : "Add Subdivision"}</h2>
+              <button onClick={closeModal} className="p-1.5 rounded-md hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Name</label>
+                  <Input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Greenfield Estate" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Code</label>
+                  <Input value={formCode} onChange={e => setFormCode(e.target.value)} placeholder="GFE" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Address</label>
+                <Input value={formAddress} onChange={e => setFormAddress(e.target.value)} placeholder="Barangay, City, Province" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Contact Email</label>
+                  <Input type="email" value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="admin@subdivision.com" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Contact Phone</label>
+                  <Input value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="+63 912 345 6789" />
+                </div>
+              </div>
+
+              {/* Geofence Map */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium">Geofence Boundary</label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={drawingGeofence ? "default" : "outline"}
+                      className={cn("text-xs h-7", drawingGeofence && "bg-[#1da253] hover:bg-[#1da253]/90")}
+                      onClick={() => setDrawingGeofence(!drawingGeofence)}
+                    >
+                      {drawingGeofence ? "Drawing... (click map)" : "Draw Geofence"}
+                    </Button>
+                    {geofencePoints.length > 0 && (
+                      <Button type="button" size="sm" variant="outline" className="text-xs h-7" onClick={() => setGeofencePoints([])}>
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="h-64 rounded-lg overflow-hidden border border-border">
+                  <MapContainer
+                    center={geofencePoints.length > 0 ? geofencePoints[0]! : [10.3157, 123.8854]}
+                    zoom={14}
+                    scrollWheelZoom={true}
+                    style={{ height: "100%", width: "100%" }}
+                  >
+                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OSM' />
+                    <GeofenceDrawer points={geofencePoints} onAddPoint={(lat, lng) => setGeofencePoints(prev => [...prev, [lat, lng]])} enabled={drawingGeofence} />
+                    {geofencePoints.length >= 3 && (
+                      <Polygon positions={geofencePoints} pathOptions={{ color: "#1da253", fillColor: "#1da253", fillOpacity: 0.2, weight: 2 }} />
+                    )}
+                    {geofencePoints.length > 0 && geofencePoints.length < 3 && (
+                      <Polyline positions={geofencePoints} pathOptions={{ color: "#1da253", weight: 2, dashArray: "5 5" }} />
+                    )}
+                    {geofencePoints.map((p, i) => (
+                      <Marker key={i} position={p} />
+                    ))}
+                  </MapContainer>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {geofencePoints.length === 0 ? "Click \"Draw Geofence\" then click on the map to place boundary points (min 3)." :
+                   geofencePoints.length < 3 ? `${geofencePoints.length} point(s) placed — need at least 3 for a polygon.` :
+                   `${geofencePoints.length} points — polygon ready.`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 p-5 border-t border-border">
+              <Button variant="outline" onClick={closeModal} disabled={saving}>Cancel</Button>
+              <Button onClick={handleSave} disabled={saving || !formName || !formCode} className="bg-[#1da253] hover:bg-[#1da253]/90">
+                {saving ? "Saving..." : editingSub ? "Save Changes" : "Create Subdivision"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign User/Bin Modal */}
+      {showAssignModal && selectedSubId && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowAssignModal(false)} />
+          <div className="relative z-10 w-full max-w-md mx-4 rounded-xl border border-border bg-card shadow-2xl max-h-[70vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-sm font-semibold">Assign {assignType === "user" ? "User" : "Bin"} to {selectedSub?.name}</h3>
+              <button onClick={() => setShowAssignModal(false)} className="p-1 rounded-md hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {assignType === "user" ? (
+                allUsers.filter(u => u.subdivisionId !== selectedSubId).length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">All users are already in this subdivision</p>
+                ) : (
+                  allUsers.filter(u => u.subdivisionId !== selectedSubId).map(u => (
+                    <button key={u.id} onClick={() => handleAssign(u.id)}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-md hover:bg-muted/60 text-sm">
+                      <div>
+                        <p className="font-medium text-xs">{u.fullName}</p>
+                        <p className="text-xs text-muted-foreground">{u.email}</p>
+                      </div>
+                      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                        u.role === "admin" ? "bg-purple-100 text-purple-700" :
+                        u.role === "dispatcher" ? "bg-blue-100 text-blue-700" :
+                        "bg-green-100 text-green-700"
+                      )}>{u.role}</span>
+                    </button>
+                  ))
+                )
+              ) : (
+                allBinsForAssign.filter(b => b.subdivisionId !== selectedSubId).length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">All bins are already in this subdivision</p>
+                ) : (
+                  allBinsForAssign.filter(b => b.subdivisionId !== selectedSubId).map(b => (
+                    <button key={b.id} onClick={() => handleAssign(b.id)}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-md hover:bg-muted/60 text-sm">
+                      <div>
+                        <p className="font-medium text-xs">{b.deviceCode}</p>
+                        <p className="text-xs text-muted-foreground">{b.capacityLiters}L</p>
+                      </div>
+                      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                        b.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"
+                      )}>{b.status}</span>
+                    </button>
+                  ))
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
